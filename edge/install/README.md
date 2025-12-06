@@ -57,6 +57,7 @@ kubeedge-edge-<版本>-<架构>.tar.gz
 │   └── ctr
 ├── runc                           # runc 二进制文件
 ├── images/                        # 容器镜像 (离线)
+│   ├── edgemesh-agent-v1.17.0.tar # EdgeMesh Agent 镜像 (~50MB)
 │   └── eclipse-mosquitto-2.0.tar  # MQTT Broker 镜像 (~10MB)
 ├── config/                        # 配置模板
 │   └── kubeedge/
@@ -69,14 +70,23 @@ kubeedge-edge-<版本>-<架构>.tar.gz
 └── install.sh                     # 一键安装脚本
 ```
 
-## 物联网设备管理 (MQTT)
+## 边缘镜像自动导入
 
-**自动部署**: 安装脚本会自动完成以下操作：
+**完全离线**: 安装脚本会自动导入所有必需的容器镜像：
 
-1. ✅ 导入 Mosquitto MQTT 镜像到 containerd
-2. ✅ 使用 systemd 启动 MQTT 容器 (监听 localhost:1883)
-3. ✅ 配置 EdgeCore EventBus 连接到本地 MQTT
-4. ✅ MQTT 作为系统服务运行,开机自启
+### EdgeMesh Agent 镜像
+- ✅ 自动导入 EdgeMesh Agent v1.17.0 镜像
+- ✅ 用于边缘服务网格和服务发现
+- ✅ 边缘节点加入集群后，EdgeMesh Agent Pod 将自动部署
+- ✅ 无需从公网拉取镜像
+
+### MQTT Broker 镜像
+- ✅ 自动导入 Mosquitto MQTT 镜像
+- ✅ 使用 systemd 启动 MQTT 容器 (监听 localhost:1883)
+- ✅ 配置 EdgeCore EventBus 连接到本地 MQTT
+- ✅ MQTT 作为系统服务运行，开机自启
+
+**重要**: 镜像已预先打包在离线安装包中，安装过程完全不需要外网连接。
 
 **特点**:
 - MQTT 以**容器方式**运行,但**不是 Kubernetes Pod**

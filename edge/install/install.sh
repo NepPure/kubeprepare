@@ -292,11 +292,42 @@ echo "  ✓ EdgeMesh 将用于边缘服务网格功能" | tee -a "$INSTALL_LOG"
 
 
 # Deploy Mosquitto MQTT Broker for IoT devices
-echo "[4.5/6] Deploying Mosquitto MQTT Broker for IoT devices..." | tee -a "$INSTALL_LOG"
+echo "[4.5/6] 导入边缘镜像 (EdgeMesh + MQTT)..." | tee -a "$INSTALL_LOG"
 IMAGES_DIR=$(find "$SCRIPT_DIR" -type d -name "images" 2>/dev/null | head -1)
 MQTT_DEPLOYED=false
 
 if [ -n "$IMAGES_DIR" ] && [ -d "$IMAGES_DIR" ]; then
+  # 1. 导入 EdgeMesh Agent 镜像
+  EDGEMESH_IMAGE_TAR=$(find "$IMAGES_DIR" -name "*edgemesh-agent*.tar" -type f 2>/dev/null | head -1)
+  
+  if [ -n "$EDGEMESH_IMAGE_TAR" ] && [ -f "$EDGEMESH_IMAGE_TAR" ]; then
+    echo "  导入 EdgeMesh Agent 镜像..." | tee -a "$INSTALL_LOG"
+    
+    # 确保 containerd 正在运行
+    if ! systemctl is-active --quiet containerd 2>/dev/null; then
+      echo "    启动 containerd..." | tee -a "$INSTALL_LOG"
+      systemctl start containerd || echo "    警告: 无法启动 containerd" | tee -a "$INSTALL_LOG"
+      sleep 2
+    fi
+    
+    # 导入镜像到 containerd
+    if [ -f "$CTR_BIN" ]; then
+      if "$CTR_BIN" -n k8s.io images import "$EDGEMESH_IMAGE_TAR" >> "$INSTALL_LOG" 2>&1; then
+        echo "  ✓ EdgeMesh Agent 镜像已导入" | tee -a "$INSTALL_LOG"
+        # 验证镜像
+        "$CTR_BIN" -n k8s.io images ls | grep edgemesh >> "$INSTALL_LOG" 2>&1 || true
+      else
+        echo "  ⚠️  EdgeMesh 镜像导入失败，边缘节点将无法加入服务网格" | tee -a "$INSTALL_LOG"
+      fi
+    else
+      echo "  ⚠️  ctr 命令未找到，无法导入 EdgeMesh 镜像" | tee -a "$INSTALL_LOG"
+    fi
+  else
+    echo "  ⚠️  EdgeMesh 镜像未在离线包中找到" | tee -a "$INSTALL_LOG"
+    echo "     边缘节点将无法加入服务网格" | tee -a "$INSTALL_LOG"
+  fi
+  
+  # 2. 导入 Mosquitto MQTT 镜像
   MQTT_IMAGE_TAR=$(find "$IMAGES_DIR" -name "*mosquitto*.tar" -type f 2>/dev/null | head -1)
   
   if [ -n "$MQTT_IMAGE_TAR" ] && [ -f "$MQTT_IMAGE_TAR" ]; then

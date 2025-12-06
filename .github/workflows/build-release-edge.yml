@@ -117,14 +117,28 @@ jobs:
           echo "[4/6] 跳过 CNI 插件 (使用 host 网络模式)..."
           echo "✓ EdgeMesh 将用于边缘服务网格"
           
-          # 4.5. 下载 Mosquitto MQTT 镜像 (用于物联网设备管理)
-          echo "[4.5/6] 下载 Mosquitto MQTT 镜像..."
+          # 4.5. 下载 EdgeMesh 和 Mosquitto MQTT 镜像
+          echo "[4.5/6] 下载 EdgeMesh 和 Mosquitto MQTT 镜像..."
           mkdir -p images
+          
+          # EdgeMesh Agent 镜像 (边缘服务网格)
+          EDGEMESH_VERSION="v1.17.0"
+          EDGEMESH_IMAGE="docker.io/kubeedge/edgemesh-agent:${EDGEMESH_VERSION}"
+          
+          echo "  拉取 EdgeMesh 镜像: $EDGEMESH_IMAGE"
+          if docker pull --platform ${{ matrix.dockerfile_platform }} "$EDGEMESH_IMAGE"; then
+            docker save "$EDGEMESH_IMAGE" -o "images/docker.io-kubeedge-edgemesh-agent-${EDGEMESH_VERSION}.tar"
+            echo "✓ EdgeMesh Agent 镜像已保存 (用于边缘服务网格)"
+            ls -lh images/docker.io-kubeedge-edgemesh-agent-${EDGEMESH_VERSION}.tar
+          else
+            echo "警告：EdgeMesh 镜像下载失败，边缘节点将无法加入服务网格"
+          fi
+          
+          # Mosquitto MQTT 镜像 (物联网设备管理)
           MQTT_IMAGE="eclipse-mosquitto:2.0"
           
           echo "  拉取 MQTT 镜像: $MQTT_IMAGE"
           if docker pull --platform ${{ matrix.dockerfile_platform }} "$MQTT_IMAGE"; then
-            # 保存镜像为 tar 文件
             docker save "$MQTT_IMAGE" -o "images/eclipse-mosquitto-2.0.tar"
             echo "✓ Mosquitto MQTT 镜像已保存 (用于边缘节点的物联网设备连接)"
             ls -lh images/eclipse-mosquitto-2.0.tar

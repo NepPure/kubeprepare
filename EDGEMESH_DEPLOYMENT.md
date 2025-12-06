@@ -40,7 +40,30 @@ curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 ## 部署步骤
 
-### 方式一: Helm 部署 (推荐)
+### 方式一: 自动部署 (推荐 - 完全离线)
+
+在 cloud 节点安装过程中，安装脚本会自动检测 EdgeMesh Helm Chart 并提示是否安装:
+
+```bash
+cd /data/kubeedge-cloud-xxx
+sudo ./install.sh
+
+# 当提示时，选择 y 安装 EdgeMesh
+=== 7. 安装 EdgeMesh (可选) ===
+检测到 EdgeMesh Helm Chart，是否安装 EdgeMesh? (y/n)
+y
+```
+
+安装脚本会自动:
+- ✅ 使用离线包中的 EdgeMesh 镜像 (无需外网)
+- ✅ 使用离线包中的 Helm Chart (无需外网)
+- ✅ 自动生成 PSK 密码
+- ✅ 自动配置中继节点
+- ✅ 保存 PSK 到 `edgemesh-psk.txt` 文件
+
+**完全离线**: EdgeMesh 镜像和 Helm Chart 已预先打包在 cloud 离线安装包中，整个部署过程无需任何外网连接。
+
+### 方式二: 手动部署 (高级用户)
 
 #### 1. 准备 PSK 密码
 
@@ -63,11 +86,23 @@ kubectl get nodes
 kubectl get node <node-name> -o wide
 ```
 
-#### 3. 部署 EdgeMesh Agent
+#### 3. 部署 EdgeMesh Agent (使用离线 Chart)
 
-EdgeMesh Agent 以 DaemonSet 形式运行在所有节点(云+边缘)上:
+EdgeMesh Agent 以 DaemonSet 形式运行在所有节点(云+边缘)上。
 
-**单中继节点配置:**
+**使用离线 Helm Chart (推荐):**
+```bash
+# 使用 cloud 安装包中的离线 Helm Chart
+cd /data/kubeedge-cloud-xxx
+helm install edgemesh ./helm-charts/edgemesh.tgz \
+  --namespace kubeedge \
+  --set agent.image=kubeedge/edgemesh-agent:v1.17.0 \
+  --set agent.psk=<your-psk-string> \
+  --set agent.relayNodes[0].nodeName=k8s-master \
+  --set agent.relayNodes[0].advertiseAddress="{152.136.201.36}"
+```
+
+**单中继节点配置 (使用在线 Chart - 需要外网):**
 ```bash
 helm install edgemesh --namespace kubeedge \
   --set agent.psk=<your-psk-string> \
@@ -76,9 +111,12 @@ helm install edgemesh --namespace kubeedge \
   https://raw.githubusercontent.com/kubeedge/edgemesh/main/build/helm/edgemesh.tgz
 ```
 
-**多中继节点配置 (高可用):**
+**多中继节点配置 (高可用 - 使用离线 Chart):**
 ```bash
-helm install edgemesh --namespace kubeedge \
+cd /data/kubeedge-cloud-xxx
+helm install edgemesh ./helm-charts/edgemesh.tgz \
+  --namespace kubeedge \
+  --set agent.image=kubeedge/edgemesh-agent:v1.17.0 \
   --set agent.psk=<your-psk-string> \
   --set agent.relayNodes[0].nodeName=k8s-master \
   --set agent.relayNodes[0].advertiseAddress="{152.136.201.36}" \

@@ -367,6 +367,68 @@ echo "" | tee -a "$INSTALL_LOG"
 
 # Print token to stdout for easy copy
 echo ""
+# =====================================
+# 7. Install EdgeMesh (Optional)
+# =====================================
+echo "" | tee -a "$INSTALL_LOG"
+echo "=== 7. 安装 EdgeMesh (可选) ===" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+
+# Check if helm-charts directory exists
+HELM_CHART_DIR="$SCRIPT_DIR/helm-charts"
+if [ -d "$HELM_CHART_DIR" ] && [ -f "$HELM_CHART_DIR/edgemesh.tgz" ]; then
+  echo "检测到 EdgeMesh Helm Chart，是否安装 EdgeMesh? (y/n)" | tee -a "$INSTALL_LOG"
+  read -r INSTALL_EDGEMESH
+  
+  if [[ "$INSTALL_EDGEMESH" == "y" || "$INSTALL_EDGEMESH" == "Y" ]]; then
+    echo "[7/7] 安装 EdgeMesh..." | tee -a "$INSTALL_LOG"
+    
+    # Generate PSK for EdgeMesh
+    EDGEMESH_PSK=$(openssl rand -base64 32)
+    echo "生成 EdgeMesh PSK: $EDGEMESH_PSK" | tee -a "$INSTALL_LOG"
+    
+    # Get master node name for relay
+    MASTER_NODE=$(/usr/local/bin/kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+    echo "使用 Relay Node: $MASTER_NODE" | tee -a "$INSTALL_LOG"
+    
+    # Install EdgeMesh using local helm chart
+    /usr/local/bin/helm install edgemesh "$HELM_CHART_DIR/edgemesh.tgz" \
+      --namespace kubeedge \
+      --set agent.image=kubeedge/edgemesh-agent:v1.17.0 \
+      --set agent.psk="$EDGEMESH_PSK" \
+      --set agent.relayNodes[0].nodeName="$MASTER_NODE" \
+      --set agent.relayNodes[0].advertiseAddress="{$CLOUD_IP}" 2>&1 | tee -a "$INSTALL_LOG"
+    
+    if [ $? -eq 0 ]; then
+      echo "✓ EdgeMesh 安装成功" | tee -a "$INSTALL_LOG"
+      
+      # Wait for EdgeMesh pods
+      echo "等待 EdgeMesh Agent Pod 启动..." | tee -a "$INSTALL_LOG"
+      /usr/local/bin/kubectl wait --for=condition=ready pod -l app=edgemesh-agent \
+        -n kubeedge --timeout=300s 2>&1 | tee -a "$INSTALL_LOG"
+      
+      # Save PSK to file for edge nodes
+      echo "$EDGEMESH_PSK" > "$SCRIPT_DIR/edgemesh-psk.txt"
+      echo "EdgeMesh PSK 已保存到: $SCRIPT_DIR/edgemesh-psk.txt" | tee -a "$INSTALL_LOG"
+    else
+      echo "✗ EdgeMesh 安装失败，请检查日志" | tee -a "$INSTALL_LOG"
+      echo "可以稍后手动安装: helm install edgemesh $HELM_CHART_DIR/edgemesh.tgz ..." | tee -a "$INSTALL_LOG"
+    fi
+  else
+    echo "跳过 EdgeMesh 安装" | tee -a "$INSTALL_LOG"
+    echo "如需稍后安装，执行:" | tee -a "$INSTALL_LOG"
+    echo "  helm install edgemesh $HELM_CHART_DIR/edgemesh.tgz --namespace kubeedge \\" | tee -a "$INSTALL_LOG"
+    echo "    --set agent.psk=\$(openssl rand -base64 32) \\" | tee -a "$INSTALL_LOG"
+    echo "    --set agent.relayNodes[0].nodeName=<master-node-name> \\" | tee -a "$INSTALL_LOG"
+    echo "    --set agent.relayNodes[0].advertiseAddress=\"{$CLOUD_IP}\"" | tee -a "$INSTALL_LOG"
+  fi
+else
+  echo "未检测到 EdgeMesh Helm Chart，跳过安装" | tee -a "$INSTALL_LOG"
+  echo "EdgeMesh 需要从 cloud 离线包中获取" | tee -a "$INSTALL_LOG"
+fi
+
+echo "" | tee -a "$INSTALL_LOG"
+
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "边缘节点接入Token (请保存用于edge节点安装):"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

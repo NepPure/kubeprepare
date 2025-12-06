@@ -123,8 +123,14 @@ jobs:
             "docker.io/kubeedge/admission:v${KUBEEDGE_VERSION}"
           )
           
+          # EdgeMesh 镜像 (用于边缘服务网格)
+          EDGEMESH_VERSION="v1.17.0"
+          EDGEMESH_IMAGES=(
+            "docker.io/kubeedge/edgemesh-agent:${EDGEMESH_VERSION}"
+          )
+          
           # 合并所有镜像
-          ALL_IMAGES=("${K3S_IMAGES[@]}" "${KUBEEDGE_IMAGES[@]}")
+          ALL_IMAGES=("${K3S_IMAGES[@]}" "${KUBEEDGE_IMAGES[@]}" "${EDGEMESH_IMAGES[@]}")
           
           for image in "${ALL_IMAGES[@]}"; do
             echo "  拉取镜像: $image"
@@ -135,6 +141,18 @@ jobs:
             docker save "$image" -o "images/${filename}.tar" 2>/dev/null || echo "警告：无法保存 $image"
           done
           echo "✓ 镜像处理完成"
+          
+          # 5. 下载 EdgeMesh Helm Chart
+          echo "[4.5/6] 下载 EdgeMesh Helm Chart..."
+          mkdir -p helm-charts
+          
+          # 下载 EdgeMesh Helm chart
+          EDGEMESH_CHART_URL="https://raw.githubusercontent.com/kubeedge/edgemesh/main/build/helm/edgemesh.tgz"
+          if wget -q -O helm-charts/edgemesh.tgz "$EDGEMESH_CHART_URL"; then
+            echo "✓ EdgeMesh Helm chart 下载完成"
+          else
+            echo "警告：无法下载 EdgeMesh Helm chart，将跳过"
+          fi
           
           # 打包离线安装包
           echo "[5/6] 创建离线安装包..."
@@ -160,6 +178,12 @@ jobs:
           cp cloudcore "$TEMP_PKG_DIR/"
           cp keadm "$TEMP_PKG_DIR/"
           cp -r images "$TEMP_PKG_DIR/"
+          
+          # 复制 EdgeMesh Helm charts (如果存在)
+          if [ -d helm-charts ] && [ -n "$(ls -A helm-charts 2>/dev/null)" ]; then
+            cp -r helm-charts "$TEMP_PKG_DIR/"
+            echo "✓ 已包含 EdgeMesh Helm charts"
+          fi
           
           # 复制安装脚本（三个：install.sh, install-kubeedge-only.sh, cleanup.sh）
           cp "$INSTALL_SCRIPT" "$TEMP_PKG_DIR/"

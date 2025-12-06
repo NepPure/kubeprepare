@@ -77,7 +77,8 @@ kubeprepare/
 ## 功能特性
 
 ✅ **完全离线支持** - 所有二进制文件、配置和容器镜像已完整打包
-  - 包含 12 个容器镜像（8个K3s + 4个KubeEdge）
+  - 包含 13 个容器镜像（8个K3s + 4个KubeEdge + 1个EdgeMesh）
+  - 包含 EdgeMesh Helm Chart (v1.17.0) 用于离线服务网格部署
   - 支持纯离线环境部署，无需任何网络连接
 
 ✅ **多架构支持** - amd64 和 arm64 兼容
@@ -151,12 +152,28 @@ sudo bash cleanup.sh
 - 相关二进制文件
 - 配置文件和数据目录
 
-### EdgeMesh 未自动启动
+### EdgeMesh 部署
 
-EdgeMesh 需要在安装完 EdgeCore 后手动部署：
-1. 边缘节点需要先成功连接到云端
-2. 确保 metaServer 已启用 (安装脚本已自动配置)
-3. 在云端通过 Helm 部署 EdgeMesh (参考 [EdgeMesh 部署指南](./EDGEMESH_DEPLOYMENT.md))
+**自动部署 (推荐):**
+- cloud 安装脚本会自动检测 helm-charts 目录
+- 提示时选择 `y` 即可自动部署 EdgeMesh
+- PSK 密码自动生成并保存到 `edgemesh-psk.txt`
+
+**手动部署:**
+```bash
+# 使用 cloud 安装包中的离线 Helm Chart
+cd /data/kubeedge-cloud-xxx
+helm install edgemesh ./helm-charts/edgemesh.tgz \
+  --namespace kubeedge \
+  --set agent.image=kubeedge/edgemesh-agent:v1.17.0 \
+  --set agent.psk="$(openssl rand -base64 32)" \
+  --set agent.relayNodes[0].nodeName=<master-node> \
+  --set agent.relayNodes[0].advertiseAddress="{<云端IP>}"
+```
+
+**完全离线**: EdgeMesh 镜像和 Helm Chart 已预先打包在 cloud 安装包中，无需外网连接。
+
+详细步骤参考 [EdgeMesh 部署指南](./EDGEMESH_DEPLOYMENT.md)
 
 ## 版本信息
 
