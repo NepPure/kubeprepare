@@ -48,6 +48,14 @@ echo "节点名称: $NODE_NAME" | tee -a "$INSTALL_LOG"
 echo "KubeEdge 版本: $KUBEEDGE_VERSION" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 
+# Verify offline package metadata
+META_DIR=$(find "$SCRIPT_DIR" -type d -name "meta" 2>/dev/null | head -1)
+if [ -n "$META_DIR" ] && [ -f "$META_DIR/version.txt" ]; then
+  echo "离线包信息:" | tee -a "$INSTALL_LOG"
+  cat "$META_DIR/version.txt" | tee -a "$INSTALL_LOG"
+  echo "" | tee -a "$INSTALL_LOG"
+fi
+
 # Find binaries
 echo "[1/6] Locating binaries..." | tee -a "$INSTALL_LOG"
 EDGECORE_BIN=$(find "$SCRIPT_DIR" -name "edgecore" -type f 2>/dev/null | head -1)
@@ -121,14 +129,27 @@ mkdir -p /etc/kubeedge
 mkdir -p /var/lib/kubeedge
 mkdir -p /var/log/kubeedge
 
-# Copy configuration
+# Copy configuration from offline package
 CONFIG_DIR=$(find "$SCRIPT_DIR" -type d -name "kubeedge" 2>/dev/null | head -1)
 if [ -n "$CONFIG_DIR" ] && [ -d "$CONFIG_DIR" ]; then
-  cp "$CONFIG_DIR"/edgecore-config.yaml /etc/kubeedge/edgecore.yaml || true
+  if [ -f "$CONFIG_DIR/edgecore-config.yaml" ]; then
+    cp "$CONFIG_DIR/edgecore-config.yaml" /etc/kubeedge/edgecore.yaml || true
+    echo "  ✓ 使用离线包中的配置文件" | tee -a "$INSTALL_LOG"
+  fi
 fi
 
-# Create edgecore service
-cat > /etc/systemd/system/edgecore.service << EOF
+# Install systemd service from offline package (优先使用离线包)
+SYSTEMD_DIR=$(find "$SCRIPT_DIR" -type d -name "systemd" 2>/dev/null | head -1)
+if [ -n "$SYSTEMD_DIR" ] && [ -f "$SYSTEMD_DIR/edgecore.service" ]; then
+  echo "  使用离线包中的 systemd service 文件..." | tee -a "$INSTALL_LOG"
+  cp "$SYSTEMD_DIR/edgecore.service" /etc/systemd/system/edgecore.service
+  # 确保 ExecStart 指向正确的配置文件
+  sed -i 's|ExecStart=.*|ExecStart=/usr/local/bin/edgecore --config=/etc/kubeedge/edgecore.yaml|g' /etc/systemd/system/edgecore.service || true
+  echo "  ✓ systemd service 已从离线包安装" | tee -a "$INSTALL_LOG"
+else
+  echo "  离线包中未找到 service 文件，创建默认配置..." | tee -a "$INSTALL_LOG"
+  # 如果离线包中没有，则创建默认的
+  cat > /etc/systemd/system/edgecore.service << EOF
 [Unit]
 Description=KubeEdge EdgeCore
 Documentation=https://kubeedge.io
@@ -148,6 +169,7 @@ SyslogIdentifier=edgecore
 [Install]
 WantedBy=multi-user.target
 EOF
+fi
 
 systemctl daemon-reload
 echo "✓ EdgeCore installed" | tee -a "$INSTALL_LOG"
@@ -157,8 +179,8 @@ echo "[6/6] Setting up edge node configuration..." | tee -a "$INSTALL_LOG"
 cp "$KEADM_BIN" /usr/local/bin/keadm
 chmod +x /usr/local/bin/keadm
 
-# Join edge node to cluster
-echo "Joining edge node to KubeEdge cluster..." | tee -a "$INSTALL_LOG"
+# Configure edge node (完全离线模式)
+echo "Configuring edge node for KubeEdge cluster..." | tee -a "$INSTALL_LOG"
 
 # Parse cloud address
 if [[ "$CLOUD_ADDRESS" == *":"* ]]; then
@@ -169,17 +191,59 @@ else
   CLOUD_PORT="10000"
 fi
 
-# Update edgecore config with cloud address
+# Update edgecore config with cloud address and node name
 if [ -f /etc/kubeedge/edgecore.yaml ]; then
+  echo "  Updating edgecore configuration..." | tee -a "$INSTALL_LOG"
   sed -i "s|server: .*|server: ${CLOUD_IP}:${CLOUD_PORT}|g" /etc/kubeedge/edgecore.yaml || true
+  sed -i "s|hostnameOverride: .*|hostnameOverride: ${NODE_NAME}|g" /etc/kubeedge/edgecore.yaml || true
+  echo "  ✓ Configuration updated" | tee -a "$INSTALL_LOG"
+else
+  echo "  Warning: edgecore.yaml not found, creating minimal config..." | tee -a "$INSTALL_LOG"
+  
+  # Create minimal edgecore config if not exists
+  cat > /etc/kubeedge/edgecore.yaml << EDGECONFIG
+apiVersion: edgecore.config.kubeedge.io/v1alpha2
+kind: EdgeCore
+database:
+  dataSource: /var/lib/kubeedge/edgecore.db
+modules:
+  edgeHub:
+    enable: true
+    heartbeat: 15
+    httpServer: https://${CLOUD_IP}:${CLOUD_PORT}
+    websocket:
+      enable: true
+      server: ${CLOUD_IP}:${CLOUD_PORT}
+  edged:
+    enable: true
+    hostnameOverride: ${NODE_NAME}
+    nodeIP: 
+  edgeStream:
+    enable: true
+    handshakeTimeout: 30
+    readDeadline: 15
+    server: ${CLOUD_IP}:10003
+    tlsTunnelCAFile: /etc/kubeedge/ca/rootCA.crt
+    tlsTunnelCertFile: /etc/kubeedge/certs/server.crt
+    tlsTunnelPrivateKeyFile: /etc/kubeedge/certs/server.key
+    writeDeadline: 15
+  eventBus:
+    enable: true
+    mqttMode: 2
+    mqttServerExternal: tcp://127.0.0.1:1883
+    mqttServerInternal: tcp://127.0.0.1:1884
+  metaManager:
+    enable: true
+    metaServer:
+      enable: true
+  serviceBus:
+    enable: false
+EDGECONFIG
+  echo "  ✓ Minimal configuration created" | tee -a "$INSTALL_LOG"
 fi
 
-# Try to join using keadm
-if "$KEADM_BIN" join --cloudcore-ipport="${CLOUD_IP}:${CLOUD_PORT}" --edgenode-name="$NODE_NAME" --kubeedge-version="v${KUBEEDGE_VERSION}" 2>&1 | tee -a "$INSTALL_LOG"; then
-  echo "✓ Edge node configuration completed" | tee -a "$INSTALL_LOG"
-else
-  echo "Warning: keadm join returned non-zero, but continuing..." | tee -a "$INSTALL_LOG"
-fi
+echo "✓ Edge node configuration completed (offline mode)" | tee -a "$INSTALL_LOG"
+echo "  Note: Using local configuration only, no network access required" | tee -a "$INSTALL_LOG"
 
 # Enable and start edgecore service
 systemctl enable edgecore

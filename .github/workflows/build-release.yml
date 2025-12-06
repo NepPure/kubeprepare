@@ -199,9 +199,9 @@ jobs:
           
           # 定义版本
           KUBEEDGE_VERSION="1.22.0"
-          CONTAINERD_VERSION="1.7.0"
-          RUNC_VERSION="1.1.9"
-          CNI_VERSION="1.3.0"
+          CONTAINERD_VERSION="1.7.29"
+          RUNC_VERSION="1.4.0"
+          CNI_VERSION="1.8.0"
           
           # 1. 下载 KubeEdge 边缘端包
           echo "[1/6] 下载 KubeEdge 边缘端包..."
@@ -295,6 +295,40 @@ jobs:
           EOFCONFIG
           echo "✓ 配置模板已创建"
           
+          # 5-b. 创建 edgecore systemd service 模板（避免 keadm 下载）
+          echo "[5/6-b] 创建 systemd service 模板..."
+          mkdir -p systemd
+          cat > systemd/edgecore.service << 'EOFSVC'
+          [Unit]
+          Description=KubeEdge EdgeCore
+          Documentation=https://kubeedge.io
+          After=network-online.target
+          Wants=network-online.target
+          
+          [Service]
+          Type=simple
+          ExecStart=/usr/local/bin/edgecore
+          Restart=always
+          RestartSec=5
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=edgecore
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOFSVC
+          echo "✓ systemd service 模板已创建"
+          
+          # 5-c. 创建安装准备文件（keadm 兼容）
+          echo "[5/6-c] 创建安装元数据..."
+          mkdir -p meta
+          cat > meta/version.txt << EOFMETA
+          kubeedge_version=${KUBEEDGE_VERSION}
+          arch=${{ matrix.arch }}
+          build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOFMETA
+          echo "✓ 安装元数据已创建"
+          
           # 6. 打包离线安装包
           echo "[6/6] 创建离线安装包..."
           # install.sh 在 GITHUB_WORKSPACE/edge/install/ 目录
@@ -312,6 +346,8 @@ jobs:
             runc \
             cni-plugins \
             config \
+            systemd \
+            meta \
             -C "$(dirname "$INSTALL_SCRIPT")" install.sh
           
           echo "✓ 包已创建: $PACKAGE_NAME"

@@ -179,9 +179,9 @@ git push origin v1.0.0
 当前默认版本：
 - **K3S**: v1.34.2+k3s1
 - **KubeEdge**: 1.22.0
-- **Containerd**: 1.7.0
-- **RUNC**: 1.1.9
-- **CNI Plugins**: 1.3.0
+- **Containerd**: 1.7.29
+- **RUNC**: 1.4.0
+- **CNI Plugins**: 1.8.0
 
 ### 修改版本
 编辑 `.github/workflows/build-release.yml`，搜索并修改对应的版本变量。

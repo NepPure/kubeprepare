@@ -140,9 +140,9 @@ bash edge/build/build.sh amd64
 ### 当前版本配置
 - **K3S 版本**: v1.34.2+k3s1
 - **KubeEdge 版本**: 1.22.0
-- **Containerd 版本**: 1.7.0
-- **RUNC 版本**: 1.1.9
-- **CNI 插件版本**: 1.3.0
+- **Containerd 版本**: 1.7.29
+- **RUNC 版本**: 1.4.0
+- **CNI 插件版本**: 1.8.0
 
 ### 修改版本
 编辑 `.github/workflows/build-release.yml` 中的版本变量。
