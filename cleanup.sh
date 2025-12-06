@@ -162,8 +162,23 @@ if [ "$IS_EDGE" = true ]; then
   rm -f /etc/systemd/system/edgecore.service
   echo "  ✓ EdgeCore 服务文件已删除"
 
-  # 2. 停止并禁用 containerd 服务
-  echo "[2/7] 停止 containerd 服务..."
+  # 2. 停止并禁用 mosquitto 服务
+  echo "[2/8] 停止 Mosquitto MQTT 服务..."
+  if systemctl is-active --quiet mosquitto 2>/dev/null; then
+    systemctl stop mosquitto || true
+    echo "  ✓ Mosquitto 服务已停止"
+  fi
+  
+  if systemctl is-enabled --quiet mosquitto 2>/dev/null; then
+    systemctl disable mosquitto || true
+    echo "  ✓ Mosquitto 服务已禁用"
+  fi
+  
+  rm -f /etc/systemd/system/mosquitto.service
+  echo "  ✓ Mosquitto 服务文件已删除"
+
+  # 3. 停止并禁用 containerd 服务
+  echo "[3/8] 停止 containerd 服务..."
   if systemctl is-active --quiet containerd 2>/dev/null; then
     systemctl stop containerd || true
     echo "  ✓ containerd 服务已停止"
@@ -177,24 +192,25 @@ if [ "$IS_EDGE" = true ]; then
   rm -f /etc/systemd/system/containerd.service
   echo "  ✓ containerd 服务文件已删除"
 
-  # 3. 杀死所有相关进程
-  echo "[3/7] 杀死残留进程..."
+  # 4. 杀死所有相关进程
+  echo "[4/8] 杀死残留进程..."
   pkill -9 edgecore || true
+  pkill -9 mosquitto || true
   pkill -9 containerd || true
   pkill -9 containerd-shim || true
   pkill -9 containerd-shim-runc-v2 || true
   sleep 2
   echo "  ✓ 进程已清理"
 
-  # 4. 卸载挂载点
-  echo "[4/7] 卸载containerd挂载点..."
+  # 5. 卸载挂载点
+  echo "[5/8] 卸载containerd挂载点..."
   for mount in $(mount | grep '/run/containerd\|/var/lib/containerd\|/var/lib/kubelet' | cut -d ' ' -f 3); do
     umount "$mount" 2>/dev/null || true
   done
   echo "  ✓ 挂载点已卸载"
 
-  # 5. 删除二进制文件
-  echo "[5/7] 删除边缘端二进制文件..."
+  # 6. 删除二进制文件
+  echo "[6/8] 删除边缘端二进制文件..."
   rm -f /usr/local/bin/edgecore
   rm -f /usr/local/bin/containerd
   rm -f /usr/local/bin/containerd-shim
@@ -205,19 +221,21 @@ if [ "$IS_EDGE" = true ]; then
   systemctl daemon-reload
   echo "  ✓ 二进制文件已删除"
 
-  # 6. 删除 CNI 插件
-  echo "[6/7] 删除 CNI 插件..."
+  # 7. 删除 CNI 插件
+  echo "[7/8] 删除 CNI 插件..."
   rm -rf /opt/cni/bin/*
   rm -rf /etc/cni
   echo "  ✓ CNI 插件已删除"
 
-  # 7. 删除配置和数据目录
-  echo "[7/7] 删除配置和数据目录..."
+  # 8. 删除配置和数据目录
+  echo "[8/8] 删除配置和数据目录..."
   rm -rf /etc/kubeedge
   rm -rf /etc/containerd
   rm -rf /var/lib/kubeedge
   rm -rf /var/lib/containerd
   rm -rf /var/lib/kubelet
+  rm -rf /var/lib/mosquitto
+  rm -rf /var/log/mosquitto
   rm -rf /run/containerd
   rm -rf /run/kubeedge
   echo "  ✓ 配置和数据已删除"
