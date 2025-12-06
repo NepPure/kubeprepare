@@ -298,52 +298,11 @@ else
   exit 1
 fi
 
-# Configure CNI network
-echo "[4.2/6] Configuring CNI network..." | tee -a "$INSTALL_LOG"
+# Create CNI config directory (EdgeCore's edged module will create CNI config automatically)
+echo "[4.2/6] Preparing CNI directory..." | tee -a "$INSTALL_LOG"
 mkdir -p /etc/cni/net.d
-
-# Create bridge CNI configuration
-# Note: subnet will be overridden by Kubernetes PodCIDR allocation
-cat > /etc/cni/net.d/10-kubeedge-bridge.conflist <<EOF
-{
-  "cniVersion": "0.4.0",
-  "name": "kubeedge-br0",
-  "plugins": [
-    {
-      "type": "bridge",
-      "bridge": "kubeedge0",
-      "isDefaultGateway": true,
-      "forceAddress": false,
-      "ipMasq": true,
-      "hairpinMode": true,
-      "ipam": {
-        "type": "host-local",
-        "ranges": [
-          [{"subnet": "10.42.0.0/16"}]
-        ],
-        "routes": [
-          {"dst": "0.0.0.0/0"}
-        ]
-      }
-    },
-    {
-      "type": "portmap",
-      "capabilities": {
-        "portMappings": true
-      }
-    },
-    {
-      "type": "bandwidth",
-      "capabilities": {
-        "bandwidth": true
-      }
-    }
-  ]
-}
-EOF
-
-echo "  ✓ CNI配置已创建 (Kubernetes将通过PodCIDR管理IP分配)" | tee -a "$INSTALL_LOG"
-echo "✓ CNI网络配置完成" | tee -a "$INSTALL_LOG"
+echo "  ✓ CNI目录已创建 (EdgeCore的edged模块将根据PodCIDR自动配置CNI)" | tee -a "$INSTALL_LOG"
+echo "✓ CNI准备完成" | tee -a "$INSTALL_LOG"
 
 
 # Deploy Mosquitto MQTT Broker for IoT devices
