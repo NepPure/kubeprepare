@@ -37,6 +37,9 @@ if ! wget -q -O "edgesite.tar.gz" "$EDGESITE_URL"; then
   exit 1
 fi
 tar -xzf "edgesite.tar.gz"
+# Extract edgecore binary from the archive
+cp "edgesite-v${KUBEEDGE_VERSION}-linux-${ARCH}/edgesite/edgesite-agent" ./edgecore
+chmod +x ./edgecore
 rm "edgesite.tar.gz"
 echo "✓ KubeEdge 边缘端包下载完成"
 
@@ -49,6 +52,9 @@ if ! wget -q -O "keadm.tar.gz" "$KEADM_URL"; then
   exit 1
 fi
 tar -xzf "keadm.tar.gz"
+# Extract keadm binary from the archive
+cp "keadm-v${KUBEEDGE_VERSION}-linux-${ARCH}/keadm/keadm" ./keadm
+chmod +x ./keadm
 rm "keadm.tar.gz"
 echo "✓ KubeEdge keadm 下载完成"
 
