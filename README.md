@@ -6,7 +6,18 @@
 - **云端**：k3s + KubeEdge CloudCore（支持 amd64/arm64）
 - **边缘端**：containerd + runc + KubeEdge EdgeCore（支持 amd64/arm64）
 
-支持在完全离线环境下快速部署 KubeEdge 边缘计算基础设施。
+支持在**完全离线环境**下快速部署 KubeEdge 边缘计算基础设施。
+
+### 完整离线支持
+
+✅ **云端镜像完整打包** (最新修复)
+- 包含所有 K3s 系统镜像 (8个)
+- 包含所有 KubeEdge 组件镜像 (4个)
+  - cloudcore:v1.22.0
+  - iptables-manager:v1.22.0
+  - controller-manager:v1.22.0
+  - admission:v1.22.0
+- 安装前自动预导入，无需联网
 
 ## 快速开始
 
@@ -65,20 +76,41 @@ kubeprepare/
 
 ## 功能特性
 
-✅ **完全离线支持** - 所有二进制文件和配置已包含
+✅ **完全离线支持** - 所有二进制文件、配置和容器镜像已完整打包
+  - 包含 12 个容器镜像（8个K3s + 4个KubeEdge）
+  - 支持纯离线环境部署，无需任何网络连接
 
 ✅ **多架构支持** - amd64 和 arm64 兼容
 
 ✅ **一键安装** - 云端和边缘端都支持自动化部署
 
+✅ **镜像预导入** - 安装前自动加载所有镜像，避免在线拉取
+
 ✅ **Token 安全机制** - 云端自动生成 token 供边缘端接入
 
 ✅ **持续集成** - 自动构建和发布到 GitHub Release
+
+✅ **完整性验证** - 提供验证脚本确保离线包完整性
 
 ## 详细文档
 
 - [云端安装指南](./cloud/install/README.md)
 - [边缘端安装指南](./edge/install/README.md)
+- [离线镜像修复报告](./OFFLINE_IMAGE_FIX.md) - 完整离线支持的技术细节
+
+## 验证工具
+
+### 验证云端离线包完整性
+
+```bash
+# 验证构建的离线包是否包含所有必需镜像
+bash verify_cloud_images.sh kubeedge-cloud-1.22.0-k3s-v1.34.2+k3s1-amd64.tar.gz
+```
+
+验证内容：
+- ✓ 4个KubeEdge组件镜像
+- ✓ 8个K3s系统镜像  
+- ✓ 所有必需的二进制文件和配置
 
 ## 故障排除
 

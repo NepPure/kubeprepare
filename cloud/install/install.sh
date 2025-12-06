@@ -196,6 +196,31 @@ echo "[5/7] Creating KubeEdge namespace..." | tee -a "$INSTALL_LOG"
 kubectl create namespace kubeedge || true
 echo "✓ Namespace created" | tee -a "$INSTALL_LOG"
 
+# Pre-import KubeEdge images before keadm init
+echo "[5/7-b] Pre-importing KubeEdge component images..." | tee -a "$INSTALL_LOG"
+if [ -d "$IMAGES_DIR" ]; then
+  KUBEEDGE_IMAGE_COUNT=0
+  for image_tar in "$IMAGES_DIR"/docker.io-kubeedge-*.tar; do
+    if [ -f "$image_tar" ]; then
+      echo "  Pre-importing KubeEdge image: $(basename "$image_tar")" | tee -a "$INSTALL_LOG"
+      if /usr/local/bin/k3s ctr images import "$image_tar" >> "$INSTALL_LOG" 2>&1; then
+        KUBEEDGE_IMAGE_COUNT=$((KUBEEDGE_IMAGE_COUNT + 1))
+      else
+        echo "  Warning: Failed to import $(basename "$image_tar")" | tee -a "$INSTALL_LOG"
+      fi
+    fi
+  done
+  if [ $KUBEEDGE_IMAGE_COUNT -gt 0 ]; then
+    echo "✓ Pre-imported $KUBEEDGE_IMAGE_COUNT KubeEdge images" | tee -a "$INSTALL_LOG"
+    echo "Verifying KubeEdge images..." | tee -a "$INSTALL_LOG"
+    /usr/local/bin/k3s ctr images ls | grep kubeedge | tee -a "$INSTALL_LOG"
+  else
+    echo "Warning: No KubeEdge images found for pre-import" | tee -a "$INSTALL_LOG"
+  fi
+else
+  echo "Warning: Images directory not found, skipping KubeEdge image pre-import" | tee -a "$INSTALL_LOG"
+fi
+
 # Install KubeEdge CloudCore using keadm
 echo "[6/7] Installing KubeEdge CloudCore..." | tee -a "$INSTALL_LOG"
 cp "$KEADM_BIN" /usr/local/bin/keadm

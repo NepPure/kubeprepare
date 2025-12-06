@@ -96,8 +96,8 @@ jobs:
           rm keadm.tar.gz
           echo "✓ KubeEdge keadm 下载完成"
           
-          # 4. 下载 k3s 容器镜像（对应 K3s v1.34.2+k3s1 版本）
-          echo "[4/6] 下载 k3s 容器镜像..."
+          # 4. 下载 k3s 和 KubeEdge 容器镜像
+          echo "[4/6] 下载容器镜像..."
           mkdir -p images
           
           # K3s v1.34.2+k3s1 官方镜像列表
@@ -112,7 +112,18 @@ jobs:
             "docker.io/rancher/mirrored-pause:3.6"
           )
           
-          for image in "${K3S_IMAGES[@]}"; do
+          # KubeEdge v1.22.0 组件镜像列表 (从 GitHub keadm 代码获取)
+          KUBEEDGE_IMAGES=(
+            "docker.io/kubeedge/cloudcore:v${KUBEEDGE_VERSION}"
+            "docker.io/kubeedge/iptables-manager:v${KUBEEDGE_VERSION}"
+            "docker.io/kubeedge/controller-manager:v${KUBEEDGE_VERSION}"
+            "docker.io/kubeedge/admission:v${KUBEEDGE_VERSION}"
+          )
+          
+          # 合并所有镜像
+          ALL_IMAGES=("${K3S_IMAGES[@]}" "${KUBEEDGE_IMAGES[@]}")
+          
+          for image in "${ALL_IMAGES[@]}"; do
             echo "  拉取镜像: $image"
             docker pull --platform ${{ matrix.dockerfile_platform }} "$image" || echo "警告：无法拉取 $image"
             
