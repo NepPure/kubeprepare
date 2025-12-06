@@ -386,13 +386,8 @@ generate_cloudcore_config() {
     
     mkdir -p "$config_dir"
     
-    # 如果存在配置模板，使用模板
-    if [[ -f "$PACKAGE_ROOT/config/kubeedge/cloudcore-config.yaml" ]]; then
-        cp "$PACKAGE_ROOT/config/kubeedge/cloudcore-config.yaml" "$config_file"
-        log_info "使用预置配置模板"
-    else
-        # 生成基本配置
-        cat > "$config_file" << EOF
+    # 在脚本内生成完整配置
+    cat > "$config_file" << EOF
 apiVersion: cloudcore.config.kubeedge.io/v1alpha2
 kind: CloudCore
 kubeAPIConfig:
@@ -432,7 +427,6 @@ modules:
     enable: true
     nodeStatusUpdateFrequency: 10
 EOF
-    fi
     
     log_success "CloudCore 配置文件已创建: $config_file"
 }

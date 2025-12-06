@@ -136,51 +136,8 @@ jobs:
           done
           echo "✓ 镜像处理完成"
           
-          # 5. 创建配置模板
-          echo "[5/6] 创建配置模板..."
-          mkdir -p config/kubeedge
-          cat > config/kubeedge/cloudcore-config.yaml << 'EOFCONFIG'
-          apiVersion: cloudcore.config.kubeedge.io/v1alpha2
-          kind: CloudCore
-          kubeAPIConfig:
-            kubeConfig: ""
-            master: ""
-            contentType: application/vnd.kubernetes.protobuf
-            qps: 100
-            burst: 200
-          databases:
-            redis:
-              enable: false
-          cloudHub:
-            tlsCAFile: /etc/kubeedge/ca/rootCA.crt
-            tlsCertFile: /etc/kubeedge/certs/server.crt
-            tlsPrivateKeyFile: /etc/kubeedge/certs/server.key
-            listenAddr: 0.0.0.0
-            port: 10000
-            protocol: websocket
-            nodeLimit: 1000
-          cloudStream:
-            enable: true
-            streamPort: 10003
-            tlsStreamCAFile: /etc/kubeedge/ca/rootCA.crt
-            tlsStreamCertFile: /etc/kubeedge/certs/stream.crt
-            tlsStreamPrivateKeyFile: /etc/kubeedge/certs/stream.key
-            tlsEnable: true
-          authentication:
-            address: 127.0.0.1:10003
-          modules:
-            cloudHub:
-              enable: true
-            edgeController:
-              enable: true
-            deviceController:
-              enable: true
-              nodeStatusUpdateFrequency: 10
-          EOFCONFIG
-          echo "✓ 配置模板已创建"
-          
-          # 6. 打包离线安装包
-          echo "[6/6] 创建离线安装包..."
+          # 打包离线安装包
+          echo "[5/6] 创建离线安装包..."
           # install.sh 在 GITHUB_WORKSPACE/cloud/install/ 目录
           INSTALL_DIR="${GITHUB_WORKSPACE}/cloud/install"
           INSTALL_SCRIPT="$INSTALL_DIR/install.sh"
@@ -202,7 +159,6 @@ jobs:
           cp k3s-${{ matrix.arch }} "$TEMP_PKG_DIR/"
           cp cloudcore "$TEMP_PKG_DIR/"
           cp keadm "$TEMP_PKG_DIR/"
-          cp -r config "$TEMP_PKG_DIR/"
           cp -r images "$TEMP_PKG_DIR/"
           
           # 复制安装脚本（两个）

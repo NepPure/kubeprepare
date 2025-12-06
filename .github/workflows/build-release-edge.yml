@@ -141,110 +141,8 @@ jobs:
             echo "警告：Mosquitto 镜像下载失败，将影响设备管理功能"
           fi
           
-          # 5. 创建配置模板
-          echo "[5/6] 创建配置模板..."
-          mkdir -p config/kubeedge
-          cat > config/kubeedge/edgecore-config.yaml << 'EOFCONFIG'
-          apiVersion: edgecore.config.kubeedge.io/v1alpha2
-          kind: EdgeCore
-          database:
-            dataSource: /var/lib/kubeedge/edgecore.db
-          modules:
-            edgeHub:
-              enable: true
-              heartbeat: 15
-            edgeStream:
-              enable: true
-              handshakeTimeout: 5
-              readDeadline: 15
-              server: 127.0.0.1:10003
-              tlsCAFile: /etc/kubeedge/ca/rootCA.crt
-              tlsCertFile: /etc/kubeedge/certs/edge.crt
-              tlsPrivateKeyFile: /etc/kubeedge/certs/edge.key
-              tlsEnable: true
-            eventBus:
-              enable: true
-              mqttMode: 2
-              mqttServerExternal: tcp://127.0.0.1:1883
-              mqttServerInternal: tcp://127.0.0.1:1884
-              mqttQOS: 0
-              mqttRetain: false
-              mqttSessionQueueSize: 100
-            metaManager:
-              enable: true
-            deviceTwin:
-              enable: true
-            dbTest:
-              enable: false
-            funcManager:
-              enable: false
-            imagePrependHostname: true
-            surfaceManager:
-              enable: false
-          EOFCONFIG
-          echo "✓ 配置模板已创建 (EventBus 配置连接到 localhost:1883 MQTT)"
-          
-          # 5-b. 创建 systemd service 模板（避免 keadm 下载）
-          echo "[5/6-b] 创建 systemd service 模板..."
-          mkdir -p systemd
-          
-          # 复制 mosquitto.service 模板
-          MOSQUITTO_SVC="${GITHUB_WORKSPACE}/edge/systemd/mosquitto.service"
-          if [ -f "$MOSQUITTO_SVC" ]; then
-            cp "$MOSQUITTO_SVC" systemd/
-            echo "✓ mosquitto.service 模板已包含"
-          fi
-          
-          # 创建 containerd.service 模板
-          cat > systemd/containerd.service << 'CONTAINERD_SVC_EOF'
-          [Unit]
-          Description=containerd container runtime
-          Documentation=https://containerd.io
-          After=network.target local-fs.target
-          
-          [Service]
-          ExecStartPre=-/sbin/modprobe overlay
-          ExecStart=/usr/local/bin/containerd
-          Type=notify
-          Delegate=yes
-          KillMode=process
-          Restart=always
-          RestartSec=5
-          LimitNPROC=infinity
-          LimitCORE=infinity
-          LimitNOFILE=infinity
-          TasksMax=infinity
-          OOMScoreAdjust=-999
-          
-          [Install]
-          WantedBy=multi-user.target
-          CONTAINERD_SVC_EOF
-          echo "✓ containerd.service 模板已创建"
-          
-          cat > systemd/edgecore.service << 'EOFSVC'
-          [Unit]
-          Description=KubeEdge EdgeCore
-          Documentation=https://kubeedge.io
-          After=network-online.target mosquitto.service containerd.service
-          Wants=network-online.target
-          Requires=containerd.service
-          
-          [Service]
-          Type=simple
-          ExecStart=/usr/local/bin/edgecore --config=/etc/kubeedge/edgecore.yaml
-          Restart=always
-          RestartSec=5
-          StandardOutput=journal
-          StandardError=journal
-          SyslogIdentifier=edgecore
-          
-          [Install]
-          WantedBy=multi-user.target
-          EOFSVC
-          echo "✓ systemd service 模板已创建"
-          
-          # 5-c. 创建安装准备文件（keadm 兼容）
-          echo "[5/6-c] 创建安装元数据..."
+          # 5. 创建安装元数据
+          echo "[5/6] 创建安装元数据..."
           mkdir -p meta
           cat > meta/version.txt << EOFMETA
           kubeedge_version=${KUBEEDGE_VERSION}
@@ -271,8 +169,6 @@ jobs:
             runc \
             cni-plugins \
             images \
-            config \
-            systemd \
             meta \
             -C "$(dirname "$INSTALL_SCRIPT")" install.sh
           

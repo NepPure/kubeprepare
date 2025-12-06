@@ -196,9 +196,6 @@ else
 fi
 
 
-# Install systemd service dir variable early for MQTT and EdgeCore
-SYSTEMD_DIR=$(find "$SCRIPT_DIR" -type d -name "systemd" 2>/dev/null | head -1)
-
 # Deploy Mosquitto MQTT Broker for IoT devices
 echo "[4.5/6] Deploying Mosquitto MQTT Broker for IoT devices..." | tee -a "$INSTALL_LOG"
 IMAGES_DIR=$(find "$SCRIPT_DIR" -type d -name "images" 2>/dev/null | head -1)
@@ -222,29 +219,65 @@ if [ -n "$IMAGES_DIR" ] && [ -d "$IMAGES_DIR" ]; then
       if ctr -n k8s.io images import "$MQTT_IMAGE_TAR" >> "$INSTALL_LOG" 2>&1; then
         echo "  ✓ MQTT 镜像已导入到 containerd" | tee -a "$INSTALL_LOG"
         
-        # 安装 mosquitto systemd service
-        if [ -n "$SYSTEMD_DIR" ] && [ -f "$SYSTEMD_DIR/mosquitto.service" ]; then
-          cp "$SYSTEMD_DIR/mosquitto.service" /etc/systemd/system/mosquitto.service
-          systemctl daemon-reload
-          systemctl enable mosquitto
-          systemctl start mosquitto
-          
-          # 等待 MQTT 启动
-          echo "    等待 MQTT broker 启动..." | tee -a "$INSTALL_LOG"
-          for i in {1..10}; do
-            if systemctl is-active --quiet mosquitto; then
-              echo "  ✓ MQTT Broker 已启动 (localhost:1883)" | tee -a "$INSTALL_LOG"
-              MQTT_DEPLOYED=true
-              break
-            fi
-            sleep 1
-          done
-          
-          if ! $MQTT_DEPLOYED; then
-            echo "  ⚠️  MQTT 启动超时,请检查: systemctl status mosquitto" | tee -a "$INSTALL_LOG"
+        # 创建 mosquitto systemd service
+        cat > /etc/systemd/system/mosquitto.service << 'MOSQUITTO_SVC_EOF'
+[Unit]
+Description=Mosquitto MQTT Broker for KubeEdge IoT Devices
+Documentation=https://mosquitto.org/
+After=network-online.target containerd.service
+Wants=network-online.target
+Requires=containerd.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+TimeoutStartSec=0
+
+# 使用 ctr 运行 mosquitto 容器
+ExecStartPre=-/usr/bin/ctr -n k8s.io task kill --signal SIGTERM mosquitto
+ExecStartPre=-/usr/bin/ctr -n k8s.io task delete mosquitto
+ExecStartPre=-/usr/bin/ctr -n k8s.io container delete mosquitto
+ExecStartPre=/usr/bin/mkdir -p /var/lib/mosquitto/data /var/log/mosquitto
+
+ExecStart=/usr/bin/ctr -n k8s.io run \
+  --rm \
+  --net-host \
+  --mount type=bind,src=/var/lib/mosquitto/data,dst=/mosquitto/data,options=rbind:rw \
+  --mount type=bind,src=/var/log/mosquitto,dst=/mosquitto/log,options=rbind:rw \
+  docker.io/library/eclipse-mosquitto:2.0 \
+  mosquitto \
+  mosquitto -c /mosquitto-no-auth.conf
+
+ExecStop=/usr/bin/ctr -n k8s.io task kill --signal SIGTERM mosquitto
+ExecStopPost=/usr/bin/ctr -n k8s.io task delete mosquitto
+ExecStopPost=/usr/bin/ctr -n k8s.io container delete mosquitto
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mosquitto
+
+[Install]
+WantedBy=multi-user.target
+MOSQUITTO_SVC_EOF
+        
+        systemctl daemon-reload
+        systemctl enable mosquitto
+        systemctl start mosquitto
+        
+        # 等待 MQTT 启动
+        echo "    等待 MQTT broker 启动..." | tee -a "$INSTALL_LOG"
+        for i in {1..10}; do
+          if systemctl is-active --quiet mosquitto; then
+            echo "  ✓ MQTT Broker 已启动 (localhost:1883)" | tee -a "$INSTALL_LOG"
+            MQTT_DEPLOYED=true
+            break
           fi
-        else
-          echo "  ⚠️  mosquitto.service 模板未找到" | tee -a "$INSTALL_LOG"
+          sleep 1
+        done
+        
+        if ! $MQTT_DEPLOYED; then
+          echo "  ⚠️  MQTT 启动超时,请检查: systemctl status mosquitto" | tee -a "$INSTALL_LOG"
         fi
       else
         echo "  ⚠️  MQTT 镜像导入失败" | tee -a "$INSTALL_LOG"
@@ -276,26 +309,18 @@ mkdir -p /var/log/kubeedge
 mkdir -p /etc/kubeedge/ca
 mkdir -p /etc/kubeedge/certs
 
-# Install systemd service from offline package (优先使用离线包)
-SYSTEMD_DIR=$(find "$SCRIPT_DIR" -type d -name "systemd" 2>/dev/null | head -1)
-if [ -n "$SYSTEMD_DIR" ] && [ -f "$SYSTEMD_DIR/edgecore.service" ]; then
-  echo "  使用离线包中的 systemd service 文件..." | tee -a "$INSTALL_LOG"
-  cp "$SYSTEMD_DIR/edgecore.service" /etc/systemd/system/edgecore.service
-  echo "  ✓ systemd service 已从离线包安装" | tee -a "$INSTALL_LOG"
-else
-  echo "  离线包中未找到 service 文件，创建默认配置..." | tee -a "$INSTALL_LOG"
-  # 如果离线包中没有，则创建默认的
-  cat > /etc/systemd/system/edgecore.service << EOF
+# 创建 EdgeCore systemd service
+cat > /etc/systemd/system/edgecore.service << 'EDGECORE_SVC_EOF'
 [Unit]
 Description=KubeEdge EdgeCore
 Documentation=https://kubeedge.io
-After=network-online.target
+After=network-online.target mosquitto.service containerd.service
 Wants=network-online.target
+Requires=containerd.service
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/edgecore --config=/etc/kubeedge/edgecore.yaml
-KillMode=process
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -304,8 +329,7 @@ SyslogIdentifier=edgecore
 
 [Install]
 WantedBy=multi-user.target
-EOF
-fi
+EDGECORE_SVC_EOF
 
 systemctl daemon-reload
 echo "✓ EdgeCore installed" | tee -a "$INSTALL_LOG"
