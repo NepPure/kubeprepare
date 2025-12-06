@@ -307,21 +307,21 @@ for i in {1..30}; do
 done
 
 # Enable CloudCore dynamicController (Required for EdgeMesh metaServer)
-echo "[6.5/7] Enabling CloudCore dynamicController..." | tee -a "$INSTALL_LOG"
+echo "[6.5/7] Enabling CloudCore dynamicController and cloudStream..." | tee -a "$INSTALL_LOG"
 if $KUBECTL -n kubeedge get cm cloudcore 2>/dev/null | grep -q cloudcore; then
-  echo "  Patching CloudCore ConfigMap to enable dynamicController..." | tee -a "$INSTALL_LOG"
+  echo "  Patching CloudCore ConfigMap to enable dynamicController and cloudStream..." | tee -a "$INSTALL_LOG"
   
   # Get current configmap
   CLOUDCORE_CM_FILE=$(mktemp)
   $KUBECTL -n kubeedge get cm cloudcore -o yaml > "$CLOUDCORE_CM_FILE"
   
-  # Check if dynamicController is already enabled
-  if grep -q "enable: true" "$CLOUDCORE_CM_FILE" | grep -q "dynamicController" 2>/dev/null; then
-    echo "  ✓ dynamicController is already enabled" | tee -a "$INSTALL_LOG"
+  # Check if dynamicController and cloudStream are already enabled
+  if grep -q "enable: true" "$CLOUDCORE_CM_FILE" | grep -q "dynamicController" 2>/dev/null && grep -q "cloudStream" "$CLOUDCORE_CM_FILE" 2>/dev/null; then
+    echo "  ✓ dynamicController and cloudStream are already enabled" | tee -a "$INSTALL_LOG"
   else
-    # Use kubectl patch to enable dynamicController
-    if $KUBECTL -n kubeedge patch cm cloudcore --type=json -p='[{"op": "replace", "path": "/data/cloudcore.yaml", "value": "modules:\n  cloudHub:\n    advertiseAddress:\n    - '\"$EXTERNAL_IP\"'\n    nodeLimit: 1000\n  dynamicController:\n    enable: true\n"}]' >> "$INSTALL_LOG" 2>&1; then
-      echo "  ✓ dynamicController enabled successfully" | tee -a "$INSTALL_LOG"
+    # Use kubectl patch to enable dynamicController and cloudStream
+    if $KUBECTL -n kubeedge patch cm cloudcore --type=json -p='[{"op": "replace", "path": "/data/cloudcore.yaml", "value": "modules:\n  cloudHub:\n    advertiseAddress:\n    - '\"$EXTERNAL_IP\"'\n    nodeLimit: 1000\n  cloudStream:\n    enable: true\n    streamPort: 10003\n    tunnelPort: 10004\n  dynamicController:\n    enable: true\n"}]' >> "$INSTALL_LOG" 2>&1; then
+      echo "  ✓ dynamicController and cloudStream enabled successfully" | tee -a "$INSTALL_LOG"
       
       # Restart CloudCore pod to apply changes
       echo "  Restarting CloudCore pod to apply configuration..." | tee -a "$INSTALL_LOG"
@@ -339,7 +339,7 @@ if $KUBECTL -n kubeedge get cm cloudcore 2>/dev/null | grep -q cloudcore; then
       done
     else
       echo "  Warning: Failed to patch CloudCore ConfigMap" | tee -a "$INSTALL_LOG"
-      echo "  You may need to manually enable dynamicController in /etc/kubeedge/config/cloudcore.yaml" | tee -a "$INSTALL_LOG"
+      echo "  You may need to manually enable dynamicController and cloudStream in /etc/kubeedge/config/cloudcore.yaml" | tee -a "$INSTALL_LOG"
     fi
   fi
   rm -f "$CLOUDCORE_CM_FILE"
@@ -347,7 +347,7 @@ else
   echo "  Warning: CloudCore ConfigMap not found" | tee -a "$INSTALL_LOG"
   echo "  Checking if cloudcore.yaml exists in /etc/kubeedge/config/..." | tee -a "$INSTALL_LOG"
   if [ -f /etc/kubeedge/config/cloudcore.yaml ]; then
-    echo "  Found /etc/kubeedge/config/cloudcore.yaml, enabling dynamicController..." | tee -a "$INSTALL_LOG"
+    echo "  Found /etc/kubeedge/config/cloudcore.yaml, enabling dynamicController and cloudStream..." | tee -a "$INSTALL_LOG"
     # Backup original config
     cp /etc/kubeedge/config/cloudcore.yaml /etc/kubeedge/config/cloudcore.yaml.bak
     
@@ -363,7 +363,21 @@ else
 DYNAMIC_EOF
     fi
     
-    echo "  ✓ dynamicController enabled in cloudcore.yaml" | tee -a "$INSTALL_LOG"
+    # Check if cloudStream section exists
+    if grep -q "cloudStream:" /etc/kubeedge/config/cloudcore.yaml; then
+      # Enable cloudStream if it's disabled
+      sed -i '/cloudStream:/,/enable:/ s/enable: false/enable: true/' /etc/kubeedge/config/cloudcore.yaml
+    else
+      # Add cloudStream section
+      cat >> /etc/kubeedge/config/cloudcore.yaml << 'STREAM_EOF'
+  cloudStream:
+    enable: true
+    streamPort: 10003
+    tunnelPort: 10004
+STREAM_EOF
+    fi
+    
+    echo "  ✓ dynamicController and cloudStream enabled in cloudcore.yaml" | tee -a "$INSTALL_LOG"
     echo "  Restarting cloudcore service..." | tee -a "$INSTALL_LOG"
     systemctl restart cloudcore 2>/dev/null || $KUBECTL -n kubeedge delete pod -l kubeedge=cloudcore >> "$INSTALL_LOG" 2>&1 || true
     sleep 5
