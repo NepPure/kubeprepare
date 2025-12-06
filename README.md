@@ -59,8 +59,6 @@ kubeprepare/
 │   │   ├── install.sh             # 边缘端安装脚本
 │   │   └── README.md              # 边缘端详细说明
 │   └── release/                   # 生成的离线包存放位置
-├── scripts/
-│   └── create-release.sh           # 自动化构建和发布脚本
 ├── cleanup.sh                      # 清理脚本（用于重新安装）
 └── README.md                       # 本文件
 ```
