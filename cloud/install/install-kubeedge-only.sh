@@ -517,11 +517,19 @@ show_token() {
     log_info "获取边缘节点接入 Token..."
     
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_info "[DRY-RUN] 将执行: keadm gettoken"
+        log_info "[DRY-RUN] 将执行: kubectl get secret tokensecret"
         return 0
     fi
     
-    if command -v keadm &> /dev/null; then
+    # 首选方法：直接从K8s secret获取完整的JWT token
+    EDGE_TOKEN=$(kubectl get secret -n kubeedge tokensecret -o jsonpath='{.data.tokendata}' 2>/dev/null | base64 -d)
+    
+    # 备选方法：使用keadm
+    if [ -z "$EDGE_TOKEN" ] && command -v keadm &> /dev/null; then
+        EDGE_TOKEN=$(keadm gettoken --kube-config="$KUBECONFIG" 2>/dev/null)
+    fi
+    
+    if [ -n "$EDGE_TOKEN" ]; then
         echo ""
         echo "=============================================="
         echo "边缘节点接入信息"
@@ -530,12 +538,22 @@ show_token() {
         echo "CloudCore 地址: $ADVERTISE_ADDRESS:10000"
         echo ""
         echo "Token (用于边缘节点接入):"
-        keadm gettoken --kube-config="$KUBECONFIG" 2>/dev/null || echo "获取 Token 失败，请稍后手动执行: keadm gettoken"
+        echo "$EDGE_TOKEN"
+        echo ""
+        if [[ "$EDGE_TOKEN" == *"."* ]]; then
+            echo "✓ Token格式: JWT (正确)"
+        else
+            echo "⚠ Token格式可能不正确，请检查"
+        fi
+        echo ""
+        echo "使用方法:"
+        echo "  sudo ./install.sh $ADVERTISE_ADDRESS:10000 '$EDGE_TOKEN' <节点名称>"
         echo ""
         echo "=============================================="
         echo ""
     else
-        log_warn "keadm 不可用，无法获取 Token"
+        log_warn "无法获取 Token"
+        log_info "请手动执行: kubectl get secret -n kubeedge tokensecret -o jsonpath='{.data.tokendata}' | base64 -d"
     fi
 }
 

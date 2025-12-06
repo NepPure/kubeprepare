@@ -260,12 +260,39 @@ mkdir -p "$TOKEN_DIR"
 CLOUD_IP="$EXTERNAL_IP"
 CLOUD_PORT="10000"
 
-# Generate token using keadm
-EDGE_TOKEN=$("$KEADM_BIN" gettoken --kubeedge-version=v"$KUBEEDGE_VERSION" --kube-config=/etc/rancher/k3s/k3s.yaml 2>/dev/null || echo "")
+# Wait for tokensecret to be ready
+echo "  Waiting for KubeEdge token secret..." | tee -a "$INSTALL_LOG"
+for i in {1..30}; do
+  if $KUBECTL get secret -n kubeedge tokensecret &>/dev/null; then
+    echo "  ✓ Token secret is ready" | tee -a "$INSTALL_LOG"
+    break
+  fi
+  if [ $i -eq 30 ]; then
+    echo "  Warning: Token secret not found, will try keadm" | tee -a "$INSTALL_LOG"
+  fi
+  sleep 1
+done
 
+# Get token directly from K8s secret (正确的完整JWT格式)
+EDGE_TOKEN=$($KUBECTL get secret -n kubeedge tokensecret -o jsonpath='{.data.tokendata}' 2>/dev/null | base64 -d)
+
+# Fallback: try keadm gettoken
 if [ -z "$EDGE_TOKEN" ]; then
-  # Fallback: generate simple token
+  echo "  Trying keadm gettoken..." | tee -a "$INSTALL_LOG"
+  EDGE_TOKEN=$("$KEADM_BIN" gettoken --kubeedge-version=v"$KUBEEDGE_VERSION" --kube-config=/etc/rancher/k3s/k3s.yaml 2>/dev/null || echo "")
+fi
+
+# Last fallback: generate simple token (should not happen in normal case)
+if [ -z "$EDGE_TOKEN" ]; then
+  echo "  Warning: Using fallback token generation" | tee -a "$INSTALL_LOG"
   EDGE_TOKEN=$(openssl rand -base64 32 | tr -d '\n' || echo "default-token-$(date +%s)")
+fi
+
+# Validate token format (should be JWT format with dots)
+if [[ "$EDGE_TOKEN" == *"."* ]]; then
+  echo "  ✓ Token format validated (JWT)" | tee -a "$INSTALL_LOG"
+else
+  echo "  Warning: Token format may be incorrect (not JWT format)" | tee -a "$INSTALL_LOG"
 fi
 
 # Save token to file
@@ -311,8 +338,18 @@ echo "" | tee -a "$INSTALL_LOG"
 # Print token to stdout for easy copy
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "EDGE NODE TOKEN:"
+echo "边缘节点接入Token (请保存用于edge节点安装):"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-cat "$TOKEN_FILE" | jq . || cat "$TOKEN_FILE"
+if command -v jq &>/dev/null; then
+  cat "$TOKEN_FILE" | jq -r . 2>/dev/null || cat "$TOKEN_FILE"
+else
+  cat "$TOKEN_FILE"
+fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "完整Token内容 (用于edge安装脚本第2个参数):"
+echo "$EDGE_TOKEN"
+echo ""
+echo "使用方法:"
+echo "  cd /data/kubeedge-edge-xxx && sudo ./install.sh $CLOUD_IP:$CLOUD_PORT '$EDGE_TOKEN' <节点名称>"
 echo ""
