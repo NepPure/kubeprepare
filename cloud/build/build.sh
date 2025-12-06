@@ -128,11 +128,18 @@ echo "✓ Configuration templates created"
 echo "[5/5] Creating offline package..."
 mkdir -p "$RELEASE_DIR"
 PACKAGE_NAME="kubeedge-cloud-${KUBEEDGE_VERSION}-k3s-${K3S_VERSION}-${ARCH}.tar.gz"
+# 获取install.sh的路径
+INSTALL_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../install" && pwd)/install.sh"
+if [ ! -f "$INSTALL_SCRIPT" ]; then
+  echo "错误：找不到安装脚本 $INSTALL_SCRIPT"
+  exit 1
+fi
 tar -czf "$RELEASE_DIR/$PACKAGE_NAME" \
   "k3s-${ARCH}" \
   cloudcore \
   keadm \
-  config
+  config \
+  -C "$(dirname "$INSTALL_SCRIPT")" install.sh
 echo "✓ Package created: $RELEASE_DIR/$PACKAGE_NAME"
 
 # Cleanup build directory

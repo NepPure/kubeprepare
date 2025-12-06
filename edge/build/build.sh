@@ -138,12 +138,19 @@ echo ""
 echo "[5/4] Creating offline package..."
 mkdir -p "$RELEASE_DIR"
 PACKAGE_NAME="kubeedge-edge-${KUBEEDGE_VERSION}-${ARCH}.tar.gz"
+# 获取install.sh的路径
+INSTALL_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../install" && pwd)/install.sh"
+if [ ! -f "$INSTALL_SCRIPT" ]; then
+  echo "错误：找不到安装脚本 $INSTALL_SCRIPT"
+  exit 1
+fi
 tar -czf "$RELEASE_DIR/$PACKAGE_NAME" \
   edgecore \
   keadm \
   runc \
   cni-plugins \
-  config
+  config \
+  -C "$(dirname "$INSTALL_SCRIPT")" install.sh
 echo "✓ Package created: $RELEASE_DIR/$PACKAGE_NAME"
 
 # Cleanup build directory
