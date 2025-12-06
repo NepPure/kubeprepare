@@ -19,11 +19,12 @@ echo ""
 IS_CLOUD=false
 IS_EDGE=false
 
-if systemctl list-units --full -all | grep -q "k3s.service"; then
+# 检查k3s服务或二进制文件
+if systemctl list-units --full -all | grep -q "k3s.service" || [ -f /usr/local/bin/k3s ]; then
   IS_CLOUD=true
 fi
 
-if systemctl list-units --full -all | grep -q "edgecore.service"; then
+if systemctl list-units --full -all | grep -q "edgecore.service" || [ -f /usr/local/bin/edgecore ]; then
   IS_EDGE=true
 fi
 
@@ -37,20 +38,8 @@ if [ "$IS_CLOUD" = true ]; then
   echo "[云端] 开始清理 K3s 和 CloudCore..."
   echo ""
   
-  # 1. 停止 K3s
-  echo "[1/7] 停止 K3s 服务..."
-  if systemctl is-active --quiet k3s; then
-    systemctl stop k3s || true
-    echo "  ✓ K3s 服务已停止"
-  fi
-  
-  if systemctl is-enabled --quiet k3s; then
-    systemctl disable k3s || true
-    echo "  ✓ K3s 服务已禁用"
-  fi
-  
-  # 2. 运行 K3s 卸载脚本（如果存在）
-  echo "[2/7] 运行 K3s 卸载脚本..."
+  # 1. 运行 K3s 卸载脚本（如果存在）- 这是最彻底的方式
+  echo "[1/9] 运行 K3s 卸载脚本..."
   if [ -f /usr/local/bin/k3s-uninstall.sh ]; then
     /usr/local/bin/k3s-uninstall.sh || true
     echo "  ✓ K3s 卸载脚本已执行"
@@ -58,50 +47,90 @@ if [ "$IS_CLOUD" = true ]; then
     echo "  - K3s 卸载脚本不存在，手动清理"
   fi
   
-  # 3. 删除 K3s 服务文件
-  echo "[3/7] 删除 K3s 相关文件..."
+  # 2. 停止 K3s 服务
+  echo "[2/9] 停止 K3s 服务..."
+  if systemctl is-active --quiet k3s 2>/dev/null; then
+    systemctl stop k3s || true
+    echo "  ✓ K3s 服务已停止"
+  fi
+  
+  if systemctl is-enabled --quiet k3s 2>/dev/null; then
+    systemctl disable k3s || true
+    echo "  ✓ K3s 服务已禁用"
+  fi
+  
+  # 3. 杀死所有k3s和containerd相关进程
+  echo "[3/9] 杀死残留进程..."
+  pkill -9 k3s || true
+  pkill -9 containerd || true
+  pkill -9 containerd-shim || true
+  pkill -9 containerd-shim-runc-v2 || true
+  pkill -9 cloudcore || true
+  sleep 2
+  echo "  ✓ 进程已清理"
+  
+  # 4. 卸载挂载点
+  echo "[4/9] 卸载k3s挂载点..."
+  for mount in $(mount | grep '/run/k3s\|/var/lib/rancher/k3s\|/var/lib/kubelet' | cut -d ' ' -f 3); do
+    umount "$mount" 2>/dev/null || true
+  done
+  echo "  ✓ 挂载点已卸载"
+  
+  # 5. 删除 K3s 服务文件和二进制
+  echo "[5/9] 删除 K3s 相关文件..."
   rm -f /etc/systemd/system/k3s.service
   rm -f /etc/systemd/system/k3s.service.env
+  rm -f /etc/systemd/system/multi-user.target.wants/k3s.service
   rm -f /usr/local/bin/k3s
+  rm -f /usr/local/bin/k3s-*
   rm -f /usr/local/bin/kubectl
   rm -f /usr/local/bin/crictl
   rm -f /usr/local/bin/ctr
+  systemctl daemon-reload
   echo "  ✓ K3s 二进制文件已删除"
   
-  # 4. 删除 K3s 数据目录
-  echo "[4/7] 删除 K3s 数据目录..."
+  # 6. 删除 K3s 数据目录
+  echo "[6/9] 删除 K3s 数据目录..."
   rm -rf /var/lib/rancher/k3s
+  rm -rf /var/lib/rancher/node
+  rm -rf /var/lib/rancher
+  rm -rf /etc/rancher/k3s
+  rm -rf /etc/rancher/node
   rm -rf /etc/rancher
+  rm -rf /run/k3s
+  rm -rf /run/flannel
   echo "  ✓ K3s 数据已删除"
   
-  # 5. 停止并删除 CloudCore
-  echo "[5/7] 清理 CloudCore..."
-  kubectl delete namespace kubeedge 2>/dev/null || true
+  # 7. 删除 CloudCore 和 KubeEdge 组件
+  echo "[7/9] 清理 CloudCore..."
   rm -f /usr/local/bin/cloudcore
   rm -f /usr/local/bin/keadm
-  echo "  ✓ CloudCore 已删除"
-  
-  # 6. 删除 KubeEdge 配置和数据
-  echo "[6/7] 删除 KubeEdge 配置..."
   rm -rf /etc/kubeedge
   rm -rf /var/lib/kubeedge
-  echo "  ✓ KubeEdge 配置已删除"
+  echo "  ✓ CloudCore 已删除"
   
-  # 7. 清理网络和进程
-  echo "[7/7] 清理网络和进程..."
-  # 杀死残留进程
-  pkill -9 k3s || true
-  pkill -9 containerd || true
-  pkill -9 cloudcore || true
-  
-  # 清理网络接口
+  # 8. 清理网络接口
+  echo "[8/9] 清理网络接口..."
   ip link delete cni0 2>/dev/null || true
   ip link delete flannel.1 2>/dev/null || true
+  ip link delete kube-bridge 2>/dev/null || true
   
-  # 清理 iptables 规则
-  iptables-save | grep -v KUBE- | grep -v CNI- | iptables-restore || true
+  # 清理网络命名空间
+  for ns in $(ip netns list 2>/dev/null | grep 'cni-' | awk '{print $1}'); do
+    ip netns delete "$ns" 2>/dev/null || true
+  done
+  echo "  ✓ 网络接口已清理"
   
-  echo "  ✓ 网络和进程已清理"
+  # 9. 清理 iptables 规则
+  echo "[9/9] 清理 iptables 规则..."
+  iptables -t nat -F 2>/dev/null || true
+  iptables -t nat -X 2>/dev/null || true
+  iptables -t filter -F 2>/dev/null || true
+  iptables -t filter -X 2>/dev/null || true
+  iptables -t mangle -F 2>/dev/null || true
+  iptables -t mangle -X 2>/dev/null || true
+  echo "  ✓ iptables 规则已清理"
+  
   echo ""
   echo "✓ 云端清理完成！"
   echo ""
@@ -115,13 +144,13 @@ if [ "$IS_EDGE" = true ]; then
   echo ""
   
   # 1. 停止并禁用 edgecore 服务
-  echo "[1/5] 停止 EdgeCore 服务..."
-  if systemctl is-active --quiet edgecore; then
+  echo "[1/7] 停止 EdgeCore 服务..."
+  if systemctl is-active --quiet edgecore 2>/dev/null; then
     systemctl stop edgecore || true
     echo "  ✓ EdgeCore 服务已停止"
   fi
   
-  if systemctl is-enabled --quiet edgecore; then
+  if systemctl is-enabled --quiet edgecore 2>/dev/null; then
     systemctl disable edgecore || true
     echo "  ✓ EdgeCore 服务已禁用"
   fi
@@ -130,13 +159,13 @@ if [ "$IS_EDGE" = true ]; then
   echo "  ✓ EdgeCore 服务文件已删除"
 
   # 2. 停止并禁用 containerd 服务
-  echo "[2/5] 停止 containerd 服务..."
-  if systemctl is-active --quiet containerd; then
+  echo "[2/7] 停止 containerd 服务..."
+  if systemctl is-active --quiet containerd 2>/dev/null; then
     systemctl stop containerd || true
     echo "  ✓ containerd 服务已停止"
   fi
   
-  if systemctl is-enabled --quiet containerd; then
+  if systemctl is-enabled --quiet containerd 2>/dev/null; then
     systemctl disable containerd || true
     echo "  ✓ containerd 服务已禁用"
   fi
@@ -144,8 +173,24 @@ if [ "$IS_EDGE" = true ]; then
   rm -f /etc/systemd/system/containerd.service
   echo "  ✓ containerd 服务文件已删除"
 
-  # 3. 删除二进制文件
-  echo "[3/5] 删除边缘端二进制文件..."
+  # 3. 杀死所有相关进程
+  echo "[3/7] 杀死残留进程..."
+  pkill -9 edgecore || true
+  pkill -9 containerd || true
+  pkill -9 containerd-shim || true
+  pkill -9 containerd-shim-runc-v2 || true
+  sleep 2
+  echo "  ✓ 进程已清理"
+
+  # 4. 卸载挂载点
+  echo "[4/7] 卸载containerd挂载点..."
+  for mount in $(mount | grep '/run/containerd\|/var/lib/containerd\|/var/lib/kubelet' | cut -d ' ' -f 3); do
+    umount "$mount" 2>/dev/null || true
+  done
+  echo "  ✓ 挂载点已卸载"
+
+  # 5. 删除二进制文件
+  echo "[5/7] 删除边缘端二进制文件..."
   rm -f /usr/local/bin/edgecore
   rm -f /usr/local/bin/containerd
   rm -f /usr/local/bin/containerd-shim
@@ -153,25 +198,25 @@ if [ "$IS_EDGE" = true ]; then
   rm -f /usr/local/bin/ctr
   rm -f /usr/local/bin/runc
   rm -f /usr/local/bin/keadm
+  systemctl daemon-reload
   echo "  ✓ 二进制文件已删除"
 
-  # 4. 删除 CNI 插件
-  echo "[4/5] 删除 CNI 插件..."
+  # 6. 删除 CNI 插件
+  echo "[6/7] 删除 CNI 插件..."
   rm -rf /opt/cni/bin/*
+  rm -rf /etc/cni
   echo "  ✓ CNI 插件已删除"
 
-  # 5. 删除配置和数据目录
-  echo "[5/5] 删除配置和数据目录..."
+  # 7. 删除配置和数据目录
+  echo "[7/7] 删除配置和数据目录..."
   rm -rf /etc/kubeedge
   rm -rf /etc/containerd
   rm -rf /var/lib/kubeedge
   rm -rf /var/lib/containerd
+  rm -rf /var/lib/kubelet
   rm -rf /run/containerd
+  rm -rf /run/kubeedge
   echo "  ✓ 配置和数据已删除"
-  
-  # 清理残留进程
-  pkill -9 edgecore || true
-  pkill -9 containerd || true
   
   echo ""
   echo "✓ 边缘端清理完成！"
