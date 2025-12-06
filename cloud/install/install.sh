@@ -531,14 +531,10 @@ if [ -d "$HELM_CHART_DIR" ] && [ -f "$HELM_CHART_DIR/edgemesh.tgz" ]; then
       if [ $? -eq 0 ]; then
         echo "✓ EdgeMesh 安装成功" | tee -a "$INSTALL_LOG"
         
-        # Wait for EdgeMesh pods
-        echo "等待 EdgeMesh Agent Pod 启动..." | tee -a "$INSTALL_LOG"
-        $KUBECTL wait --for=condition=ready pod -l app=edgemesh-agent \
-          -n kubeedge --timeout=300s 2>&1 | tee -a "$INSTALL_LOG"
-        
         # Save PSK to file for edge nodes
         echo "$EDGEMESH_PSK" > "$SCRIPT_DIR/edgemesh-psk.txt"
         echo "EdgeMesh PSK 已保存到: $SCRIPT_DIR/edgemesh-psk.txt" | tee -a "$INSTALL_LOG"
+        echo "  提示: EdgeMesh Agent 将在边缘节点加入后自动部署到各边缘节点" | tee -a "$INSTALL_LOG"
       else
         echo "✗ EdgeMesh 安装失败，请检查日志" | tee -a "$INSTALL_LOG"
       fi
