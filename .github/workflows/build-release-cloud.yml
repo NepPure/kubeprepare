@@ -159,7 +159,7 @@ jobs:
           mkdir -p crds/istio
           
           ISTIO_CRD_BASE_URL="https://raw.githubusercontent.com/kubeedge/edgemesh/main/build/crds/istio"
-          for crd in destinationrules gateways virtualservices; do
+          for crd in crd-destinationrule crd-gateway crd-virtualservice; do
             echo "  下载 ${crd}.yaml..."
             if wget -q -O "crds/istio/${crd}.yaml" "${ISTIO_CRD_BASE_URL}/${crd}.yaml"; then
               echo "  ✓ ${crd}.yaml 下载完成"
