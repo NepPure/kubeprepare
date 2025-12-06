@@ -40,9 +40,13 @@ if [ "$IS_CLOUD" = true ]; then
   
   # 1. 运行 K3s 卸载脚本（如果存在）- 这是最彻底的方式
   echo "[1/9] 运行 K3s 卸载脚本..."
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   if [ -f /usr/local/bin/k3s-uninstall.sh ]; then
     /usr/local/bin/k3s-uninstall.sh || true
     echo "  ✓ K3s 卸载脚本已执行"
+  elif [ -f "$SCRIPT_DIR/k3s-uninstall.sh" ]; then
+    "$SCRIPT_DIR/k3s-uninstall.sh" || true
+    echo "  ✓ K3s 卸载脚本已执行（使用项目脚本）"
   else
     echo "  - K3s 卸载脚本不存在，手动清理"
   fi

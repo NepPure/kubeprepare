@@ -240,7 +240,7 @@ mkdir -p /etc/kubeedge
 # Wait for CloudCore to be ready
 echo "Waiting for CloudCore to be ready..." | tee -a "$INSTALL_LOG"
 for i in {1..30}; do
-  if $KUBECTL -n kubeedge get pod -l app=cloudcore 2>/dev/null | grep -q Running; then
+  if $KUBECTL -n kubeedge get pod -l kubeedge=cloudcore 2>/dev/null | grep -q Running; then
     echo "✓ CloudCore is ready" | tee -a "$INSTALL_LOG"
     break
   fi
