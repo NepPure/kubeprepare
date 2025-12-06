@@ -1,0 +1,64 @@
+name: Build and Release KubeEdge Offline Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build offline package
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget tar gzip
+          echo "TAG_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Prepare offline package
+        run: |
+          mkdir -p build_output
+          bash online_prepare.sh build_output
+          ls -lh build_output/
+
+      - name: Create release package
+        run: |
+          cd build_output
+          # Rename the package with version tag
+          for file in kubeedge-edge-offline-*.tar.gz; do
+            if [ -f "$file" ]; then
+              mv "$file" "kubeedge-edge-offline-${TAG_VERSION}.tar.gz"
+              break
+            fi
+          done
+          ls -lh
+
+      - name: Generate checksum
+        run: |
+          cd build_output
+          sha256sum kubeedge-edge-offline-*.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            build_output/kubeedge-edge-offline-*.tar.gz
+            build_output/checksums.txt
+          generate_release_notes: true
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf build_output
