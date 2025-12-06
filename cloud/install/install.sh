@@ -79,6 +79,27 @@ echo "[3/7] Installing k3s..." | tee -a "$INSTALL_LOG"
 cp "$K3S_BIN" /usr/local/bin/k3s
 chmod +x /usr/local/bin/k3s
 
+# Load container images before starting k3s
+echo "[3/7-a] Loading container images..." | tee -a "$INSTALL_LOG"
+IMAGES_DIR=$(find "$SCRIPT_DIR" -type d -name "images" 2>/dev/null | head -1)
+if [ -d "$IMAGES_DIR" ]; then
+  IMAGE_COUNT=0
+  for image_tar in "$IMAGES_DIR"/*.tar; do
+    if [ -f "$image_tar" ]; then
+      echo "  Loading: $(basename "$image_tar")" | tee -a "$INSTALL_LOG"
+      # We'll load images after k3s starts using ctr
+      IMAGE_COUNT=$((IMAGE_COUNT + 1))
+    fi
+  done
+  if [ $IMAGE_COUNT -gt 0 ]; then
+    echo "✓ Found $IMAGE_COUNT images to load" | tee -a "$INSTALL_LOG"
+  else
+    echo "Warning: No image tar files found in $IMAGES_DIR" | tee -a "$INSTALL_LOG"
+  fi
+else
+  echo "Warning: Images directory not found in $SCRIPT_DIR" | tee -a "$INSTALL_LOG"
+fi
+
 # Create k3s service
 cat > /etc/systemd/system/k3s.service << EOF
 [Unit]
@@ -133,6 +154,31 @@ fi
 # Copy kubeconfig
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 chmod 644 /etc/rancher/k3s/k3s.yaml
+
+# Load container images into k3s containerd
+echo "[3/7-b] Importing container images into k3s..." | tee -a "$INSTALL_LOG"
+if [ -d "$IMAGES_DIR" ]; then
+  LOADED_COUNT=0
+  FAILED_COUNT=0
+  for image_tar in "$IMAGES_DIR"/*.tar; do
+    if [ -f "$image_tar" ]; then
+      echo "  Importing: $(basename "$image_tar")" | tee -a "$INSTALL_LOG"
+      if /usr/local/bin/k3s ctr images import "$image_tar" >> "$INSTALL_LOG" 2>&1; then
+        LOADED_COUNT=$((LOADED_COUNT + 1))
+      else
+        echo "  Warning: Failed to import $(basename "$image_tar")" | tee -a "$INSTALL_LOG"
+        FAILED_COUNT=$((FAILED_COUNT + 1))
+      fi
+    fi
+  done
+  echo "✓ Images imported: $LOADED_COUNT successful, $FAILED_COUNT failed" | tee -a "$INSTALL_LOG"
+  
+  # Verify loaded images
+  echo "Verifying loaded images..." | tee -a "$INSTALL_LOG"
+  /usr/local/bin/k3s ctr images ls -q | tee -a "$INSTALL_LOG"
+else
+  echo "Skipping image import (no images directory found)" | tee -a "$INSTALL_LOG"
+fi
 
 # Wait for API server
 echo "[4/7] Waiting for Kubernetes API..." | tee -a "$INSTALL_LOG"
