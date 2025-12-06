@@ -261,7 +261,11 @@ fi
 # Update edgecore config with cloud address and node name
 if [ -f /etc/kubeedge/edgecore.yaml ]; then
   echo "  Updating edgecore configuration..." | tee -a "$INSTALL_LOG"
-  sed -i "s|server: .*|server: ${CLOUD_IP}:${CLOUD_PORT}|g" /etc/kubeedge/edgecore.yaml || true
+  # 替换所有 cloud 相关 server 字段为公网 IP
+  sed -i "s|^\([[:space:]]*server:[[:space:]]*\).*|\1${CLOUD_IP}:${CLOUD_PORT}|g" /etc/kubeedge/edgecore.yaml || true
+  sed -i "s|^\([[:space:]]*websocket:[[:space:]]*\n[[:space:]]*enable:[[:space:]]*true[[:space:]]*\n[[:space:]]*server:[[:space:]]*\).*|\1${CLOUD_IP}:${CLOUD_PORT}|g" /etc/kubeedge/edgecore.yaml || true
+  sed -i "s|^\([[:space:]]*httpServer:[[:space:]]*\).*|\1https://${CLOUD_IP}:${CLOUD_PORT}|g" /etc/kubeedge/edgecore.yaml || true
+  sed -i "s|^\([[:space:]]*edgeStream:[[:space:]]*\n[[:space:]]*enable:[[:space:]]*true[[:space:]]*\n[[:space:]]*server:[[:space:]]*\).*|\1${CLOUD_IP}:10003|g" /etc/kubeedge/edgecore.yaml || true
   sed -i "s|hostnameOverride: .*|hostnameOverride: ${NODE_NAME}|g" /etc/kubeedge/edgecore.yaml || true
   echo "  ✓ Configuration updated" | tee -a "$INSTALL_LOG"
 else
