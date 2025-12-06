@@ -10,7 +10,7 @@ set -euo pipefail
 ARCH="${1:-amd64}"
 KUBEEDGE_VERSION="${2:-1.22.0}"
 BUILD_DIR="$(pwd)/edge-${ARCH}-build"
-RELEASE_DIR="$(pwd)/../release"
+RELEASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/edge/release"
 
 # Validate architecture
 if [[ ! "$ARCH" =~ ^(amd64|arm64)$ ]]; then

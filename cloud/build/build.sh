@@ -11,7 +11,7 @@ ARCH="${1:-amd64}"
 K3S_VERSION="${2:-v1.34.2+k3s1}"
 KUBEEDGE_VERSION="1.22.0"
 BUILD_DIR="$(pwd)/cloud-${ARCH}-build"
-RELEASE_DIR="$(pwd)/../release"
+RELEASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/cloud/release"
 
 # Validate architecture
 if [[ ! "$ARCH" =~ ^(amd64|arm64)$ ]]; then
