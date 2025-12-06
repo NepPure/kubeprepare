@@ -235,6 +235,31 @@ echo "[5/7] Creating KubeEdge namespace..." | tee -a "$INSTALL_LOG"
 $KUBECTL create namespace kubeedge || true
 echo "✓ Namespace created" | tee -a "$INSTALL_LOG"
 
+# Install Istio CRDs (Required for EdgeMesh)
+echo "[5.5/7] Installing Istio CRDs (EdgeMesh dependency)..." | tee -a "$INSTALL_LOG"
+CRDS_DIR="$SCRIPT_DIR/crds/istio"
+if [ -d "$CRDS_DIR" ] && [ -n "$(ls -A "$CRDS_DIR" 2>/dev/null)" ]; then
+  CRD_COUNT=0
+  for crd_file in "$CRDS_DIR"/*.yaml; do
+    if [ -f "$crd_file" ]; then
+      echo "  Installing $(basename "$crd_file")..." | tee -a "$INSTALL_LOG"
+      if $KUBECTL apply -f "$crd_file" >> "$INSTALL_LOG" 2>&1; then
+        CRD_COUNT=$((CRD_COUNT + 1))
+      else
+        echo "  Warning: Failed to install $(basename "$crd_file")" | tee -a "$INSTALL_LOG"
+      fi
+    fi
+  done
+  if [ $CRD_COUNT -gt 0 ]; then
+    echo "✓ Installed $CRD_COUNT Istio CRDs" | tee -a "$INSTALL_LOG"
+  else
+    echo "Warning: No Istio CRDs found in $CRDS_DIR" | tee -a "$INSTALL_LOG"
+  fi
+else
+  echo "Warning: Istio CRDs directory not found, EdgeMesh may not work properly" | tee -a "$INSTALL_LOG"
+  echo "  Expected location: $CRDS_DIR" | tee -a "$INSTALL_LOG"
+fi
+
 # Pre-import KubeEdge images before keadm init
 echo "[5/7-b] Pre-importing KubeEdge component images..." | tee -a "$INSTALL_LOG"
 if [ -d "$IMAGES_DIR" ]; then
@@ -280,6 +305,72 @@ for i in {1..30}; do
   echo "Waiting... ($i/30)" | tee -a "$INSTALL_LOG"
   sleep 2
 done
+
+# Enable CloudCore dynamicController (Required for EdgeMesh metaServer)
+echo "[6.5/7] Enabling CloudCore dynamicController..." | tee -a "$INSTALL_LOG"
+if $KUBECTL -n kubeedge get cm cloudcore 2>/dev/null | grep -q cloudcore; then
+  echo "  Patching CloudCore ConfigMap to enable dynamicController..." | tee -a "$INSTALL_LOG"
+  
+  # Get current configmap
+  CLOUDCORE_CM_FILE=$(mktemp)
+  $KUBECTL -n kubeedge get cm cloudcore -o yaml > "$CLOUDCORE_CM_FILE"
+  
+  # Check if dynamicController is already enabled
+  if grep -q "enable: true" "$CLOUDCORE_CM_FILE" | grep -q "dynamicController" 2>/dev/null; then
+    echo "  ✓ dynamicController is already enabled" | tee -a "$INSTALL_LOG"
+  else
+    # Use kubectl patch to enable dynamicController
+    if $KUBECTL -n kubeedge patch cm cloudcore --type=json -p='[{"op": "replace", "path": "/data/cloudcore.yaml", "value": "modules:\n  cloudHub:\n    advertiseAddress:\n    - '\"$EXTERNAL_IP\"'\n    nodeLimit: 1000\n  dynamicController:\n    enable: true\n"}]' >> "$INSTALL_LOG" 2>&1; then
+      echo "  ✓ dynamicController enabled successfully" | tee -a "$INSTALL_LOG"
+      
+      # Restart CloudCore pod to apply changes
+      echo "  Restarting CloudCore pod to apply configuration..." | tee -a "$INSTALL_LOG"
+      $KUBECTL -n kubeedge delete pod -l kubeedge=cloudcore >> "$INSTALL_LOG" 2>&1 || true
+      
+      # Wait for CloudCore to be ready again
+      echo "  Waiting for CloudCore to restart..." | tee -a "$INSTALL_LOG"
+      sleep 5
+      for i in {1..30}; do
+        if $KUBECTL -n kubeedge get pod -l kubeedge=cloudcore 2>/dev/null | grep -q Running; then
+          echo "  ✓ CloudCore restarted successfully" | tee -a "$INSTALL_LOG"
+          break
+        fi
+        sleep 2
+      done
+    else
+      echo "  Warning: Failed to patch CloudCore ConfigMap" | tee -a "$INSTALL_LOG"
+      echo "  You may need to manually enable dynamicController in /etc/kubeedge/config/cloudcore.yaml" | tee -a "$INSTALL_LOG"
+    fi
+  fi
+  rm -f "$CLOUDCORE_CM_FILE"
+else
+  echo "  Warning: CloudCore ConfigMap not found" | tee -a "$INSTALL_LOG"
+  echo "  Checking if cloudcore.yaml exists in /etc/kubeedge/config/..." | tee -a "$INSTALL_LOG"
+  if [ -f /etc/kubeedge/config/cloudcore.yaml ]; then
+    echo "  Found /etc/kubeedge/config/cloudcore.yaml, enabling dynamicController..." | tee -a "$INSTALL_LOG"
+    # Backup original config
+    cp /etc/kubeedge/config/cloudcore.yaml /etc/kubeedge/config/cloudcore.yaml.bak
+    
+    # Check if dynamicController section exists
+    if grep -q "dynamicController:" /etc/kubeedge/config/cloudcore.yaml; then
+      # Replace enable: false with enable: true
+      sed -i '/dynamicController:/,/enable:/ s/enable: false/enable: true/' /etc/kubeedge/config/cloudcore.yaml
+    else
+      # Add dynamicController section
+      cat >> /etc/kubeedge/config/cloudcore.yaml << 'DYNAMIC_EOF'
+  dynamicController:
+    enable: true
+DYNAMIC_EOF
+    fi
+    
+    echo "  ✓ dynamicController enabled in cloudcore.yaml" | tee -a "$INSTALL_LOG"
+    echo "  Restarting cloudcore service..." | tee -a "$INSTALL_LOG"
+    systemctl restart cloudcore 2>/dev/null || $KUBECTL -n kubeedge delete pod -l kubeedge=cloudcore >> "$INSTALL_LOG" 2>&1 || true
+    sleep 5
+  else
+    echo "  Warning: Could not find CloudCore configuration" | tee -a "$INSTALL_LOG"
+  fi
+fi
 
 # Generate edge token
 echo "[7/7] Generating edge token..." | tee -a "$INSTALL_LOG"

@@ -154,6 +154,21 @@ jobs:
             echo "警告：无法下载 EdgeMesh Helm chart，将跳过"
           fi
           
+          # 5.5. 下载 Istio CRDs (EdgeMesh 依赖)
+          echo "[4.6/6] 下载 Istio CRDs (EdgeMesh 依赖)..."
+          mkdir -p crds/istio
+          
+          ISTIO_CRD_BASE_URL="https://raw.githubusercontent.com/kubeedge/edgemesh/main/build/crds/istio"
+          for crd in destinationrules gateways virtualservices; do
+            echo "  下载 ${crd}.yaml..."
+            if wget -q -O "crds/istio/${crd}.yaml" "${ISTIO_CRD_BASE_URL}/${crd}.yaml"; then
+              echo "  ✓ ${crd}.yaml 下载完成"
+            else
+              echo "  警告：无法下载 ${crd}.yaml"
+            fi
+          done
+          echo "✓ Istio CRDs 下载完成"
+          
           # 打包离线安装包
           echo "[5/6] 创建离线安装包..."
           # install.sh 在 GITHUB_WORKSPACE/cloud/install/ 目录
@@ -183,6 +198,12 @@ jobs:
           if [ -d helm-charts ] && [ -n "$(ls -A helm-charts 2>/dev/null)" ]; then
             cp -r helm-charts "$TEMP_PKG_DIR/"
             echo "✓ 已包含 EdgeMesh Helm charts"
+          fi
+          
+          # 复制 Istio CRDs (EdgeMesh 依赖)
+          if [ -d crds ] && [ -n "$(ls -A crds/istio 2>/dev/null)" ]; then
+            cp -r crds "$TEMP_PKG_DIR/"
+            echo "✓ 已包含 Istio CRDs (EdgeMesh 依赖)"
           fi
           
           # 复制安装脚本（三个：install.sh, install-kubeedge-only.sh, cleanup.sh）
