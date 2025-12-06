@@ -101,6 +101,75 @@ if ! command -v containerd &> /dev/null; then
   fi
 fi
 
+# Configure and start containerd
+echo "Configuring containerd..." | tee -a "$INSTALL_LOG"
+mkdir -p /etc/containerd
+cat > /etc/containerd/config.toml << 'CONTAINERD_EOF'
+version = 2
+
+[plugins]
+  [plugins."io.containerd.grpc.v1.cri"]
+    sandbox_image = "kubeedge/pause:3.6"
+    [plugins."io.containerd.grpc.v1.cri".containerd]
+      default_runtime_name = "runc"
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+          runtime_type = "io.containerd.runc.v2"
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+            SystemdCgroup = true
+    [plugins."io.containerd.grpc.v1.cri".cni]
+      bin_dir = "/opt/cni/bin"
+      conf_dir = "/etc/cni/net.d"
+CONTAINERD_EOF
+
+# Create containerd systemd service if not exists
+if [ ! -f /etc/systemd/system/containerd.service ]; then
+  cat > /etc/systemd/system/containerd.service << 'CONTAINERD_SVC_EOF'
+[Unit]
+Description=containerd container runtime
+Documentation=https://containerd.io
+After=network.target local-fs.target
+
+[Service]
+ExecStartPre=-/sbin/modprobe overlay
+ExecStart=/usr/local/bin/containerd
+Type=notify
+Delegate=yes
+KillMode=process
+Restart=always
+RestartSec=5
+LimitNPROC=infinity
+LimitCORE=infinity
+LimitNOFILE=infinity
+TasksMax=infinity
+OOMScoreAdjust=-999
+
+[Install]
+WantedBy=multi-user.target
+CONTAINERD_SVC_EOF
+  echo "✓ containerd service file created" | tee -a "$INSTALL_LOG"
+fi
+
+# Start containerd
+systemctl daemon-reload
+systemctl enable containerd
+systemctl restart containerd
+
+# Wait for containerd to be ready
+echo "Waiting for containerd to start..." | tee -a "$INSTALL_LOG"
+for i in {1..10}; do
+  if systemctl is-active --quiet containerd && [ -S /run/containerd/containerd.sock ]; then
+    echo "✓ containerd is running" | tee -a "$INSTALL_LOG"
+    break
+  fi
+  sleep 1
+done
+
+if ! systemctl is-active --quiet containerd; then
+  echo "Warning: containerd may not be running properly" | tee -a "$INSTALL_LOG"
+  systemctl status containerd --no-pager | tee -a "$INSTALL_LOG"
+fi
+
 echo "✓ Prerequisites checked" | tee -a "$INSTALL_LOG"
 
 # Install runc
@@ -317,7 +386,7 @@ modules:
     registerSchedulable: true
     tailoredKubeletConfig:
       address: 127.0.0.1
-      cgroupDriver: cgroupfs
+      cgroupDriver: systemd
       cgroupsPerQOS: true
       clusterDNS: []
       clusterDomain: cluster.local

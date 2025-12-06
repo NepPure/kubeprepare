@@ -195,12 +195,39 @@ jobs:
             echo "✓ mosquitto.service 模板已包含"
           fi
           
+          # 创建 containerd.service 模板
+          cat > systemd/containerd.service << 'CONTAINERD_SVC_EOF'
+          [Unit]
+          Description=containerd container runtime
+          Documentation=https://containerd.io
+          After=network.target local-fs.target
+          
+          [Service]
+          ExecStartPre=-/sbin/modprobe overlay
+          ExecStart=/usr/local/bin/containerd
+          Type=notify
+          Delegate=yes
+          KillMode=process
+          Restart=always
+          RestartSec=5
+          LimitNPROC=infinity
+          LimitCORE=infinity
+          LimitNOFILE=infinity
+          TasksMax=infinity
+          OOMScoreAdjust=-999
+          
+          [Install]
+          WantedBy=multi-user.target
+          CONTAINERD_SVC_EOF
+          echo "✓ containerd.service 模板已创建"
+          
           cat > systemd/edgecore.service << 'EOFSVC'
           [Unit]
           Description=KubeEdge EdgeCore
           Documentation=https://kubeedge.io
-          After=network-online.target mosquitto.service
+          After=network-online.target mosquitto.service containerd.service
           Wants=network-online.target
+          Requires=containerd.service
           
           [Service]
           Type=simple
