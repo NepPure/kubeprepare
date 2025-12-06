@@ -8,7 +8,7 @@ set -euo pipefail
 #       ./build.sh arm64 1.22.0
 
 ARCH="${1:-amd64}"
-K3S_VERSION="${2:-v1.28.0}"
+K3S_VERSION="${2:-v1.34.2+k3s1}"
 KUBEEDGE_VERSION="1.22.0"
 BUILD_DIR="$(pwd)/cloud-${ARCH}-build"
 RELEASE_DIR="$(pwd)/../release"
@@ -30,7 +30,7 @@ echo ""
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
-echo "[1/5] Downloading k3s binary..."
+echo "[1/5] 下载 k3s 二进制文件..."
 K3S_ARCH="$ARCH"
 if [ "$ARCH" = "arm64" ]; then
   K3S_ARCH="arm64"
@@ -38,33 +38,44 @@ else
   K3S_ARCH="amd64"
 fi
 
-K3S_URL="https://github.com/k3s-io/k3s/releases/download/${K3S_VERSION}/k3s-${K3S_ARCH}"
+# k3s amd64 没有后缀，arm64 有后缀
+if [ "$K3S_ARCH" = "amd64" ]; then
+  K3S_URL="https://github.com/k3s-io/k3s/releases/download/${K3S_VERSION}/k3s"
+else
+  K3S_URL="https://github.com/k3s-io/k3s/releases/download/${K3S_VERSION}/k3s-${K3S_ARCH}"
+fi
+
 if ! wget -q -O "k3s-${ARCH}" "$K3S_URL"; then
-  echo "Error: Failed to download k3s $K3S_VERSION for $ARCH"
+  echo "错误：无法下载 k3s $K3S_VERSION for $ARCH"
+  echo "尝试的 URL: $K3S_URL"
   exit 1
 fi
 chmod +x "k3s-${ARCH}"
-echo "✓ k3s downloaded"
+echo "✓ k3s 下载完成"
 
-echo "[2/5] Downloading KubeEdge CloudCore binary..."
-KUBEEDGE_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/cloudcore-${KUBEEDGE_VERSION}-linux-${ARCH}.tar.gz"
-if ! wget -q -O "cloudcore.tar.gz" "$KUBEEDGE_URL"; then
-  echo "Error: Failed to download KubeEdge CloudCore $KUBEEDGE_VERSION for $ARCH"
+echo "[2/5] 下载 KubeEdge 云端包..."
+# KubeEdge 官方云端包名格式: kubeedge-v{version}-linux-{arch}.tar.gz
+KUBEEDGE_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/kubeedge-v${KUBEEDGE_VERSION}-linux-${ARCH}.tar.gz"
+if ! wget -q -O "kubeedge.tar.gz" "$KUBEEDGE_URL"; then
+  echo "错误：无法下载 KubeEdge 云端包 $KUBEEDGE_VERSION for $ARCH"
+  echo "尝试的 URL: $KUBEEDGE_URL"
   exit 1
 fi
-tar -xzf "cloudcore.tar.gz"
-rm "cloudcore.tar.gz"
-echo "✓ KubeEdge CloudCore downloaded"
+tar -xzf "kubeedge.tar.gz"
+rm "kubeedge.tar.gz"
+echo "✓ KubeEdge 云端包下载完成"
 
-echo "[3/5] Downloading KubeEdge keadm..."
-KEADM_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/keadm-${KUBEEDGE_VERSION}-linux-${ARCH}.tar.gz"
+echo "[3/5] 下载 KubeEdge keadm..."
+# KubeEdge 官方包名格式: keadm-v{version}-linux-{arch}.tar.gz
+KEADM_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/keadm-v${KUBEEDGE_VERSION}-linux-${ARCH}.tar.gz"
 if ! wget -q -O "keadm.tar.gz" "$KEADM_URL"; then
-  echo "Error: Failed to download KubeEdge keadm $KUBEEDGE_VERSION for $ARCH"
+  echo "错误：无法下载 KubeEdge keadm $KUBEEDGE_VERSION for $ARCH"
+  echo "尝试的 URL: $KEADM_URL"
   exit 1
 fi
 tar -xzf "keadm.tar.gz"
 rm "keadm.tar.gz"
-echo "✓ KubeEdge keadm downloaded"
+echo "✓ KubeEdge keadm 下载完成"
 
 echo "[4/5] Creating configuration templates..."
 mkdir -p config/kubeedge

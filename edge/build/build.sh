@@ -28,55 +28,59 @@ echo ""
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
-echo "[1/4] Downloading KubeEdge EdgeCore binary..."
-EDGECORE_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/edgecore-${KUBEEDGE_VERSION}-linux-${ARCH}.tar.gz"
-if ! wget -q -O "edgecore.tar.gz" "$EDGECORE_URL"; then
-  echo "Error: Failed to download KubeEdge EdgeCore $KUBEEDGE_VERSION for $ARCH"
+echo "[1/4] 下载 KubeEdge 边缘端包..."
+# KubeEdge 官方边缘端包名格式: edgesite-v{version}-linux-{arch}.tar.gz
+EDGESITE_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/edgesite-v${KUBEEDGE_VERSION}-linux-${ARCH}.tar.gz"
+if ! wget -q -O "edgesite.tar.gz" "$EDGESITE_URL"; then
+  echo "错误：无法下载 KubeEdge 边缘端包 $KUBEEDGE_VERSION for $ARCH"
+  echo "尝试的 URL: $EDGESITE_URL"
   exit 1
 fi
-tar -xzf "edgecore.tar.gz"
-rm "edgecore.tar.gz"
-echo "✓ KubeEdge EdgeCore downloaded"
+tar -xzf "edgesite.tar.gz"
+rm "edgesite.tar.gz"
+echo "✓ KubeEdge 边缘端包下载完成"
 
-echo "[2/4] Downloading KubeEdge keadm..."
-KEADM_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/keadm-${KUBEEDGE_VERSION}-linux-${ARCH}.tar.gz"
+echo "[2/4] 下载 KubeEdge keadm..."
+# KubeEdge 官方包名格式: keadm-v{version}-linux-{arch}.tar.gz
+KEADM_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/keadm-v${KUBEEDGE_VERSION}-linux-${ARCH}.tar.gz"
 if ! wget -q -O "keadm.tar.gz" "$KEADM_URL"; then
-  echo "Error: Failed to download KubeEdge keadm $KUBEEDGE_VERSION for $ARCH"
+  echo "错误：无法下载 KubeEdge keadm $KUBEEDGE_VERSION for $ARCH"
+  echo "尝试的 URL: $KEADM_URL"
   exit 1
 fi
 tar -xzf "keadm.tar.gz"
 rm "keadm.tar.gz"
-echo "✓ KubeEdge keadm downloaded"
+echo "✓ KubeEdge keadm 下载完成"
 
-echo "[3/4] Downloading containerd and runc..."
-# Determine containerd version
+echo "[3/4] 下载 containerd 和 runc..."
+# 确定 containerd 版本
 CONTAINERD_VERSION="1.7.0"
 RUNC_VERSION="1.1.9"
 
 CONTAINERD_URL="https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-${ARCH}.tar.gz"
 if ! wget -q -O "containerd.tar.gz" "$CONTAINERD_URL"; then
-  echo "Warning: Failed to download containerd, trying alternative URL"
+  echo "警告：无法下载 containerd，尝试备用 URL"
   CONTAINERD_URL="https://github.com/containerd/containerd/releases/download/v1.6.0/containerd-1.6.0-linux-${ARCH}.tar.gz"
-  wget -q -O "containerd.tar.gz" "$CONTAINERD_URL" || echo "Warning: containerd download failed"
+  wget -q -O "containerd.tar.gz" "$CONTAINERD_URL" || echo "警告：containerd 下载失败"
 fi
 
 if [ -f "containerd.tar.gz" ]; then
   tar -xzf "containerd.tar.gz"
   rm "containerd.tar.gz"
-  echo "✓ containerd downloaded"
+  echo "✓ containerd 下载完成"
 fi
 
-# Download runc
+# 下载 runc
 RUNC_URL="https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/runc.${ARCH}"
 if ! wget -q -O "runc" "$RUNC_URL"; then
-  echo "Warning: Failed to download runc"
+  echo "警告：无法下载 runc"
 else
   chmod +x "runc"
-  echo "✓ runc downloaded"
+  echo "✓ runc 下载完成"
 fi
 
-# Download CNI plugins
-echo "[4/4] Downloading CNI plugins..."
+# 下载 CNI 插件
+echo "[4/4] 下载 CNI 插件..."
 CNI_VERSION="1.3.0"
 CNI_URL="https://github.com/containernetworking/plugins/releases/download/v${CNI_VERSION}/cni-plugins-linux-${ARCH}-v${CNI_VERSION}.tgz"
 if ! wget -q -O "cni-plugins.tgz" "$CNI_URL"; then
