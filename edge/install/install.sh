@@ -204,15 +204,8 @@ chmod +x /usr/local/bin/edgecore
 mkdir -p /etc/kubeedge
 mkdir -p /var/lib/kubeedge
 mkdir -p /var/log/kubeedge
-
-# Copy configuration from offline package
-CONFIG_DIR=$(find "$SCRIPT_DIR" -type d -name "kubeedge" 2>/dev/null | head -1)
-if [ -n "$CONFIG_DIR" ] && [ -d "$CONFIG_DIR" ]; then
-  if [ -f "$CONFIG_DIR/edgecore-config.yaml" ]; then
-    cp "$CONFIG_DIR/edgecore-config.yaml" /etc/kubeedge/edgecore.yaml || true
-    echo "  ✓ 使用离线包中的配置文件" | tee -a "$INSTALL_LOG"
-  fi
-fi
+mkdir -p /etc/kubeedge/ca
+mkdir -p /etc/kubeedge/certs
 
 # Install systemd service from offline package (优先使用离线包)
 SYSTEMD_DIR=$(find "$SCRIPT_DIR" -type d -name "systemd" 2>/dev/null | head -1)
@@ -253,7 +246,7 @@ echo "[6/6] Setting up edge node configuration..." | tee -a "$INSTALL_LOG"
 cp "$KEADM_BIN" /usr/local/bin/keadm
 chmod +x /usr/local/bin/keadm
 
-# Configure edge node (完全离线模式)
+# Configure edge node (完全离线模式 - 直接生成完整配置)
 echo "Configuring edge node for KubeEdge cluster..." | tee -a "$INSTALL_LOG"
 
 # Parse cloud address
@@ -265,60 +258,122 @@ else
   CLOUD_PORT="10000"
 fi
 
-# Update edgecore config with cloud address and node name
-if [ -f /etc/kubeedge/edgecore.yaml ]; then
-  echo "  Updating edgecore configuration..." | tee -a "$INSTALL_LOG"
-  # 替换所有 cloud 相关 server 字段为公网 IP
-  sed -i "s|^\([[:space:]]*server:[[:space:]]*\).*|\1${CLOUD_IP}:${CLOUD_PORT}|g" /etc/kubeedge/edgecore.yaml || true
-  sed -i "s|^\([[:space:]]*websocket:[[:space:]]*\n[[:space:]]*enable:[[:space:]]*true[[:space:]]*\n[[:space:]]*server:[[:space:]]*\).*|\1${CLOUD_IP}:${CLOUD_PORT}|g" /etc/kubeedge/edgecore.yaml || true
-  sed -i "s|^\([[:space:]]*httpServer:[[:space:]]*\).*|\1https://${CLOUD_IP}:${CLOUD_PORT}|g" /etc/kubeedge/edgecore.yaml || true
-  sed -i "s|^\([[:space:]]*edgeStream:[[:space:]]*\n[[:space:]]*enable:[[:space:]]*true[[:space:]]*\n[[:space:]]*server:[[:space:]]*\).*|\1${CLOUD_IP}:10003|g" /etc/kubeedge/edgecore.yaml || true
-  sed -i "s|hostnameOverride: .*|hostnameOverride: ${NODE_NAME}|g" /etc/kubeedge/edgecore.yaml || true
-  echo "  ✓ Configuration updated" | tee -a "$INSTALL_LOG"
-else
-  echo "  Warning: edgecore.yaml not found, creating minimal config..." | tee -a "$INSTALL_LOG"
-  
-  # Create minimal edgecore config if not exists
-  cat > /etc/kubeedge/edgecore.yaml << EDGECONFIG
+# 直接生成完整的 edgecore.yaml 配置文件（符合 KubeEdge v1alpha2 官方标准）
+echo "  Generating edgecore configuration..." | tee -a "$INSTALL_LOG"
+cat > /etc/kubeedge/edgecore.yaml << 'EOF'
 apiVersion: edgecore.config.kubeedge.io/v1alpha2
 kind: EdgeCore
 database:
+  aliasName: default
   dataSource: /var/lib/kubeedge/edgecore.db
+  driverName: sqlite3
 modules:
+  dbTest:
+    enable: false
+  deviceTwin:
+    dmiSockPath: /etc/kubeedge/dmi.sock
+    enable: true
   edgeHub:
     enable: true
     heartbeat: 15
-    httpServer: https://${CLOUD_IP}:${CLOUD_PORT}
+    httpServer: https://CLOUD_IP_PLACEHOLDER:CLOUD_PORT_PLACEHOLDER
+    messageBurst: 60
+    messageQPS: 30
+    projectID: e632aba927ea4ac2b575ec1603d56f10
+    quic:
+      enable: false
+      handshakeTimeout: 30
+      readDeadline: 15
+      server: CLOUD_IP_PLACEHOLDER:10001
+      writeDeadline: 15
+    rotateCertificates: true
+    tlsCaFile: /etc/kubeedge/ca/rootCA.crt
+    tlsCertFile: /etc/kubeedge/certs/server.crt
+    tlsPrivateKeyFile: /etc/kubeedge/certs/server.key
+    token: "TOKEN_PLACEHOLDER"
     websocket:
       enable: true
-      server: ${CLOUD_IP}:${CLOUD_PORT}
-  edged:
-    enable: true
-    hostnameOverride: ${NODE_NAME}
-    nodeIP: 
+      handshakeTimeout: 30
+      readDeadline: 15
+      server: CLOUD_IP_PLACEHOLDER:CLOUD_PORT_PLACEHOLDER
+      writeDeadline: 15
   edgeStream:
     enable: true
     handshakeTimeout: 30
     readDeadline: 15
-    server: ${CLOUD_IP}:10003
+    server: CLOUD_IP_PLACEHOLDER:10003
     tlsTunnelCAFile: /etc/kubeedge/ca/rootCA.crt
     tlsTunnelCertFile: /etc/kubeedge/certs/server.crt
     tlsTunnelPrivateKeyFile: /etc/kubeedge/certs/server.key
     writeDeadline: 15
+  edged:
+    enable: true
+    hostnameOverride: NODE_NAME_PLACEHOLDER
+    maxContainerCount: -1
+    maxPerPodContainerCount: 1
+    minimumGCAge: 0s
+    podSandboxImage: kubeedge/pause:3.6
+    registerNodeNamespace: default
+    registerSchedulable: true
+    tailoredKubeletConfig:
+      address: 127.0.0.1
+      cgroupDriver: cgroupfs
+      cgroupsPerQOS: true
+      clusterDNS: ""
+      clusterDomain: cluster.local
+      containerRuntimeEndpoint: unix:///run/containerd/containerd.sock
+      contentType: application/json
+      enableDebuggingHandlers: true
+      evictionHard:
+        imagefs.available: 15%
+        memory.available: 100Mi
+        nodefs.available: 10%
+        nodefs.inodesFree: 5%
+      evictionPressureTransitionPeriod: 5m0s
+      failSwapOn: false
+      imageGCHighThresholdPercent: 85
+      imageGCLowThresholdPercent: 80
+      imageServiceEndpoint: unix:///run/containerd/containerd.sock
+      maxPods: 110
+      podLogsDir: /var/log/pods
+      registerNode: true
+      rotateCertificates: true
+      serializeImagePulls: true
+      staticPodPath: /etc/kubeedge/manifests
   eventBus:
     enable: true
+    eventBusTLS:
+      enable: false
+      tlsMqttCAFile: /etc/kubeedge/ca/rootCA.crt
+      tlsMqttCertFile: /etc/kubeedge/certs/server.crt
+      tlsMqttPrivateKeyFile: /etc/kubeedge/certs/server.key
     mqttMode: 2
+    mqttQOS: 0
+    mqttRetain: false
     mqttServerExternal: tcp://127.0.0.1:1883
     mqttServerInternal: tcp://127.0.0.1:1884
+    mqttSessionQueueSize: 100
   metaManager:
+    contextSendGroup: hub
+    contextSendModule: websocket
     enable: true
     metaServer:
-      enable: true
+      enable: false
+      server: 127.0.0.1:10550
+    remoteQueryTimeout: 60
   serviceBus:
     enable: false
-EDGECONFIG
-  echo "  ✓ Minimal configuration created" | tee -a "$INSTALL_LOG"
-fi
+  taskManager:
+    enable: false
+EOF
+
+# 替换配置文件中的占位符为实际值
+sed -i "s|CLOUD_IP_PLACEHOLDER|${CLOUD_IP}|g" /etc/kubeedge/edgecore.yaml
+sed -i "s|CLOUD_PORT_PLACEHOLDER|${CLOUD_PORT}|g" /etc/kubeedge/edgecore.yaml
+sed -i "s|NODE_NAME_PLACEHOLDER|${NODE_NAME}|g" /etc/kubeedge/edgecore.yaml
+sed -i "s|TOKEN_PLACEHOLDER|${EDGE_TOKEN}|g" /etc/kubeedge/edgecore.yaml
+
+echo "  ✓ EdgeCore configuration generated" | tee -a "$INSTALL_LOG"
 
 echo "✓ Edge node configuration completed (offline mode)" | tee -a "$INSTALL_LOG"
 echo "  Note: Using local configuration only, no network access required" | tee -a "$INSTALL_LOG"
