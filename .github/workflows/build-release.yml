@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（可选，用于手动触发）'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -12,67 +18,304 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    name: 构建离线包
+    name: 构建离线包 (${{ matrix.arch }})
     strategy:
       matrix:
         arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            dockerfile_platform: linux/amd64
+          - arch: arm64
+            dockerfile_platform: linux/arm64
+    
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 设置编译环境
+      - name: 设置QEMU支持
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.dockerfile_platform }}
+
+      - name: 设置Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 设置环境变量
         run: |
-          sudo apt-get update
-          sudo apt-get install -y wget tar gzip curl
-          echo "TAG_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          if [ -z "${{ github.event.inputs.version }}" ]; then
+            TAG_VERSION=${GITHUB_REF#refs/tags/}
+          else
+            TAG_VERSION=${{ github.event.inputs.version }}
+          fi
+          echo "TAG_VERSION=${TAG_VERSION}" >> $GITHUB_ENV
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "BUILD_DIR=$(pwd)/build-${{ matrix.arch }}" >> $GITHUB_ENV
 
       - name: 构建云端离线包
         run: |
-          mkdir -p build_output
-          echo "正在构建云端 ${{ matrix.arch }} 离线包..."
-          bash cloud/build/build.sh ${{ matrix.arch }}
-          if [ -f "cloud/release/"*.tar.gz ]; then
-            cp cloud/release/*.tar.gz build_output/
-            ls -lh build_output/
+          BUILD_DIR="build-${{ matrix.arch }}"
+          mkdir -p "$BUILD_DIR/cloud"
+          cd "$BUILD_DIR/cloud"
+          
+          echo "=== 构建云端离线包 (架构: ${{ matrix.arch }}) ==="
+          
+          # 定义版本
+          K3S_VERSION="v1.34.2+k3s1"
+          KUBEEDGE_VERSION="1.22.0"
+          
+          # 1. 下载 k3s 二进制文件
+          echo "[1/5] 下载 k3s 二进制文件..."
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            K3S_URL="https://github.com/k3s-io/k3s/releases/download/${K3S_VERSION}/k3s"
           else
-            echo "云端包构建失败!"
+            K3S_URL="https://github.com/k3s-io/k3s/releases/download/${K3S_VERSION}/k3s-arm64"
+          fi
+          wget -q -O k3s-${{ matrix.arch }} "$K3S_URL" || (echo "错误：无法下载 k3s" && exit 1)
+          chmod +x k3s-${{ matrix.arch }}
+          echo "✓ k3s 下载完成"
+          
+          # 2. 下载 KubeEdge 云端包
+          echo "[2/5] 下载 KubeEdge 云端包..."
+          KUBEEDGE_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/kubeedge-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          wget -q -O kubeedge.tar.gz "$KUBEEDGE_URL" || (echo "错误：无法下载 KubeEdge 云端包" && exit 1)
+          tar -xzf kubeedge.tar.gz
+          cp kubeedge-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}/cloud/cloudcore/cloudcore ./
+          chmod +x ./cloudcore
+          rm kubeedge.tar.gz
+          echo "✓ KubeEdge 云端包下载完成"
+          
+          # 3. 下载 KubeEdge keadm
+          echo "[3/5] 下载 KubeEdge keadm..."
+          KEADM_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/keadm-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          wget -q -O keadm.tar.gz "$KEADM_URL" || (echo "错误：无法下载 KubeEdge keadm" && exit 1)
+          tar -xzf keadm.tar.gz
+          cp keadm-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}/keadm/keadm ./
+          chmod +x ./keadm
+          rm keadm.tar.gz
+          echo "✓ KubeEdge keadm 下载完成"
+          
+          # 4. 下载 k3s 容器镜像
+          echo "[4/5] 下载 k3s 容器镜像..."
+          mkdir -p images
+          
+          K3S_IMAGES=(
+            "rancher/mirrored-pause:3.6"
+            "rancher/mirrored-coredns:1.11.1"
+            "rancher/mirrored-metrics-server:v0.7.1"
+            "rancher/local-path-provisioner:v0.0.30"
+          )
+          
+          for image in "${K3S_IMAGES[@]}"; do
+            echo "  拉取镜像: $image"
+            docker pull --platform ${{ matrix.dockerfile_platform }} "$image" || echo "警告：无法拉取 $image"
+            
+            # 保存镜像为tar文件
+            filename=$(echo "$image" | sed 's/[\/:]/-/g')
+            docker save "$image" -o "images/${filename}.tar" 2>/dev/null || echo "警告：无法保存 $image"
+          done
+          echo "✓ 镜像处理完成"
+          
+          # 5. 创建配置模板
+          echo "[5/5] 创建配置模板..."
+          mkdir -p config/kubeedge
+          cat > config/kubeedge/cloudcore-config.yaml << 'EOFCONFIG'
+          apiVersion: cloudcore.config.kubeedge.io/v1alpha2
+          kind: CloudCore
+          kubeAPIConfig:
+            kubeConfig: ""
+            master: ""
+            contentType: application/vnd.kubernetes.protobuf
+            qps: 100
+            burst: 200
+          databases:
+            redis:
+              enable: false
+          cloudHub:
+            tlsCAFile: /etc/kubeedge/ca/rootCA.crt
+            tlsCertFile: /etc/kubeedge/certs/server.crt
+            tlsPrivateKeyFile: /etc/kubeedge/certs/server.key
+            listenAddr: 0.0.0.0
+            port: 10000
+            protocol: websocket
+            nodeLimit: 1000
+          cloudStream:
+            enable: true
+            streamPort: 10003
+            tlsStreamCAFile: /etc/kubeedge/ca/rootCA.crt
+            tlsStreamCertFile: /etc/kubeedge/certs/stream.crt
+            tlsStreamPrivateKeyFile: /etc/kubeedge/certs/stream.key
+            tlsEnable: true
+          authentication:
+            address: 127.0.0.1:10003
+          modules:
+            cloudHub:
+              enable: true
+            edgeController:
+              enable: true
+            deviceController:
+              enable: true
+              nodeStatusUpdateFrequency: 10
+          EOFCONFIG
+          echo "✓ 配置模板已创建"
+          
+          # 6. 打包离线安装包
+          echo "[6/5] 创建离线安装包..."
+          INSTALL_SCRIPT="$(pwd)/../../../cloud/install/install.sh"
+          if [ ! -f "$INSTALL_SCRIPT" ]; then
+            echo "错误：找不到安装脚本 $INSTALL_SCRIPT"
             exit 1
           fi
+          
+          PACKAGE_NAME="kubeedge-cloud-${KUBEEDGE_VERSION}-k3s-${K3S_VERSION}-${{ matrix.arch }}.tar.gz"
+          tar -czf "$PACKAGE_NAME" \
+            k3s-${{ matrix.arch }} \
+            cloudcore \
+            keadm \
+            config \
+            images \
+            -C "$(dirname "$INSTALL_SCRIPT")" install.sh
+          
+          echo "✓ 包已创建: $PACKAGE_NAME"
+          echo "包大小: $(du -h "$PACKAGE_NAME" | cut -f1)"
 
       - name: 构建边缘端离线包
         run: |
-          echo "正在构建边缘端 ${{ matrix.arch }} 离线包..."
-          bash edge/build/build.sh ${{ matrix.arch }}
-          if [ -f "edge/release/"*.tar.gz ]; then
-            cp edge/release/*.tar.gz build_output/
-            ls -lh build_output/
+          BUILD_DIR="build-${{ matrix.arch }}"
+          mkdir -p "$BUILD_DIR/edge"
+          cd "$BUILD_DIR/edge"
+          
+          echo "=== 构建边缘端离线包 (架构: ${{ matrix.arch }}) ==="
+          
+          # 定义版本
+          KUBEEDGE_VERSION="1.22.0"
+          CONTAINERD_VERSION="1.7.0"
+          RUNC_VERSION="1.1.9"
+          CNI_VERSION="1.3.0"
+          
+          # 1. 下载 KubeEdge 边缘端包
+          echo "[1/4] 下载 KubeEdge 边缘端包..."
+          EDGESITE_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/edgesite-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          wget -q -O edgesite.tar.gz "$EDGESITE_URL" || (echo "错误：无法下载 KubeEdge 边缘端包" && exit 1)
+          tar -xzf edgesite.tar.gz
+          cp edgesite-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}/edgesite/edgesite-agent ./edgecore
+          chmod +x ./edgecore
+          rm edgesite.tar.gz
+          echo "✓ KubeEdge 边缘端包下载完成"
+          
+          # 2. 下载 KubeEdge keadm
+          echo "[2/4] 下载 KubeEdge keadm..."
+          KEADM_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/keadm-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          wget -q -O keadm.tar.gz "$KEADM_URL" || (echo "错误：无法下载 KubeEdge keadm" && exit 1)
+          tar -xzf keadm.tar.gz
+          cp keadm-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}/keadm/keadm ./
+          chmod +x ./keadm
+          rm keadm.tar.gz
+          echo "✓ KubeEdge keadm 下载完成"
+          
+          # 3. 下载 containerd 和 runc
+          echo "[3/4] 下载 containerd 和 runc..."
+          CONTAINERD_URL="https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          if ! wget -q -O containerd.tar.gz "$CONTAINERD_URL"; then
+            echo "警告：无法下载 containerd v${CONTAINERD_VERSION}，尝试备用版本"
+            CONTAINERD_URL="https://github.com/containerd/containerd/releases/download/v1.6.0/containerd-1.6.0-linux-${{ matrix.arch }}.tar.gz"
+            wget -q -O containerd.tar.gz "$CONTAINERD_URL" || echo "警告：containerd 下载失败"
+          fi
+          
+          if [ -f "containerd.tar.gz" ]; then
+            tar -xzf containerd.tar.gz
+            rm containerd.tar.gz
+            echo "✓ containerd 下载完成"
+          fi
+          
+          # 下载 runc
+          RUNC_URL="https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/runc.${{ matrix.arch }}"
+          if wget -q -O runc "$RUNC_URL"; then
+            chmod +x runc
+            echo "✓ runc 下载完成"
           else
-            echo "边缘端包构建失败!"
+            echo "警告：无法下载 runc"
+          fi
+          
+          # 4. 下载 CNI 插件
+          echo "[4/4] 下载 CNI 插件..."
+          CNI_URL="https://github.com/containernetworking/plugins/releases/download/v${CNI_VERSION}/cni-plugins-linux-${{ matrix.arch }}-v${CNI_VERSION}.tgz"
+          if wget -q -O cni-plugins.tgz "$CNI_URL"; then
+            mkdir -p cni-plugins
+            tar -xzf cni-plugins.tgz -C cni-plugins
+            rm cni-plugins.tgz
+            echo "✓ CNI 插件下载完成"
+          else
+            echo "警告：无法下载 CNI 插件"
+          fi
+          
+          # 5. 创建配置模板
+          echo "[5/4] 创建配置模板..."
+          mkdir -p config/kubeedge
+          cat > config/kubeedge/edgecore-config.yaml << 'EOFCONFIG'
+          apiVersion: edgecore.config.kubeedge.io/v1alpha2
+          kind: EdgeCore
+          database:
+            dataSource: /var/lib/kubeedge/edgecore.db
+          modules:
+            edgeHub:
+              enable: true
+              heartbeat: 15
+            edgeStream:
+              enable: true
+              handshakeTimeout: 5
+              readDeadline: 15
+              server: 127.0.0.1:10003
+              tlsCAFile: /etc/kubeedge/ca/rootCA.crt
+              tlsCertFile: /etc/kubeedge/certs/edge.crt
+              tlsPrivateKeyFile: /etc/kubeedge/certs/edge.key
+              tlsEnable: true
+            eventBus:
+              enable: true
+              eventBusType: default
+            metaManager:
+              enable: true
+            deviceTwin:
+              enable: true
+            funcManager:
+              enable: false
+            imagePrependHostname: true
+            surfaceManager:
+              enable: false
+          EOFCONFIG
+          echo "✓ 配置模板已创建"
+          
+          # 6. 打包离线安装包
+          echo "[6/4] 创建离线安装包..."
+          INSTALL_SCRIPT="$(pwd)/../../../edge/install/install.sh"
+          if [ ! -f "$INSTALL_SCRIPT" ]; then
+            echo "错误：找不到安装脚本 $INSTALL_SCRIPT"
             exit 1
           fi
+          
+          PACKAGE_NAME="kubeedge-edge-${KUBEEDGE_VERSION}-${{ matrix.arch }}.tar.gz"
+          tar -czf "$PACKAGE_NAME" \
+            edgecore \
+            keadm \
+            runc \
+            cni-plugins \
+            config \
+            -C "$(dirname "$INSTALL_SCRIPT")" install.sh
+          
+          echo "✓ 包已创建: $PACKAGE_NAME"
+          echo "包大小: $(du -h "$PACKAGE_NAME" | cut -f1)"
 
-      - name: 重命名包文件
+      - name: 准备输出目录
         run: |
-          cd build_output
-          # 重命名云端包
-          for file in kubeedge-cloud-*-k3s-*.tar.gz; do
-            if [ -f "$file" ]; then
-              mv "$file" "kubeedge-cloud-${TAG_VERSION}-${{ matrix.arch }}.tar.gz"
-            fi
-          done
-          # 重命名边缘端包
-          for file in kubeedge-edge-*.tar.gz; do
-            if [ -f "$file" ]; then
-              mv "$file" "kubeedge-edge-${TAG_VERSION}-${{ matrix.arch }}.tar.gz"
-            fi
-          done
-          ls -lh
+          BUILD_DIR="build-${{ matrix.arch }}"
+          mkdir -p build_output
+          cp "$BUILD_DIR/cloud/"*.tar.gz build_output/ 2>/dev/null || true
+          cp "$BUILD_DIR/edge/"*.tar.gz build_output/ 2>/dev/null || true
+          ls -lh build_output/
 
       - name: 生成校验和
         run: |
           cd build_output
-          sha256sum * > checksums-${{ matrix.arch }}.txt
+          sha256sum *.tar.gz > checksums-${{ matrix.arch }}.txt
           cat checksums-${{ matrix.arch }}.txt
 
       - name: 上传构建产物
@@ -98,13 +341,17 @@ jobs:
       - name: 合并所有文件
         run: |
           mkdir -p final_release
-          find release_files -type f -name "*.tar.gz" -o -name "checksums-*.txt" | xargs cp -t final_release/
+          find release_files -type f \( -name "*.tar.gz" -o -name "checksums-*.txt" \) -exec cp {} final_release/ \;
+          
           # 合并所有校验和文件
           touch final_release/checksums.txt
           for file in final_release/checksums-*.txt; do
-            cat "$file" >> final_release/checksums.txt
-            rm "$file"
+            if [ -f "$file" ]; then
+              cat "$file" >> final_release/checksums.txt
+              rm "$file"
+            fi
           done
+          
           ls -lh final_release/
 
       - name: 创建 Release 并上传资产
@@ -119,7 +366,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Clean up
+      - name: 清理
         if: always()
         run: |
-          rm -rf build_output
+          rm -rf release_files final_release
+
+      - name: 上传产物到 GitHub Actions 归档
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: release_files/
+          retention-days: 90
+          if-no-files-found: warn
