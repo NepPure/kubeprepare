@@ -151,9 +151,13 @@ if [ ! -f /etc/rancher/k3s/k3s.yaml ]; then
   exit 1
 fi
 
+
 # Copy kubeconfig
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 chmod 644 /etc/rancher/k3s/k3s.yaml
+
+# 统一KUBECTL命令
+KUBECTL="/usr/local/bin/k3s kubectl"
 
 # Load container images into k3s containerd
 echo "[3/7-b] Importing container images into k3s..." | tee -a "$INSTALL_LOG"
@@ -180,10 +184,11 @@ else
   echo "Skipping image import (no images directory found)" | tee -a "$INSTALL_LOG"
 fi
 
+
 # Wait for API server
 echo "[4/7] Waiting for Kubernetes API..." | tee -a "$INSTALL_LOG"
 for i in {1..30}; do
-  if kubectl cluster-info &> /dev/null; then
+  if $KUBECTL cluster-info &> /dev/null; then
     echo "✓ Kubernetes API is ready" | tee -a "$INSTALL_LOG"
     break
   fi
@@ -191,9 +196,10 @@ for i in {1..30}; do
   sleep 2
 done
 
+
 # Create kubeedge namespace
 echo "[5/7] Creating KubeEdge namespace..." | tee -a "$INSTALL_LOG"
-kubectl create namespace kubeedge || true
+$KUBECTL create namespace kubeedge || true
 echo "✓ Namespace created" | tee -a "$INSTALL_LOG"
 
 # Pre-import KubeEdge images before keadm init
@@ -230,10 +236,11 @@ chmod +x /usr/local/bin/keadm
 mkdir -p /etc/kubeedge
 "$KEADM_BIN" init --advertise-address="$EXTERNAL_IP" --kubeedge-version=v"$KUBEEDGE_VERSION" --kube-config=/etc/rancher/k3s/k3s.yaml || true
 
+
 # Wait for CloudCore to be ready
 echo "Waiting for CloudCore to be ready..." | tee -a "$INSTALL_LOG"
 for i in {1..30}; do
-  if kubectl -n kubeedge get pod -l app=cloudcore 2>/dev/null | grep -q Running; then
+  if $KUBECTL -n kubeedge get pod -l app=cloudcore 2>/dev/null | grep -q Running; then
     echo "✓ CloudCore is ready" | tee -a "$INSTALL_LOG"
     break
   fi
