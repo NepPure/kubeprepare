@@ -38,11 +38,15 @@ git push origin v1.0.0
 1. **下载 k3s 二进制文件** - 从 GitHub 获取 k3s 可执行文件
 2. **下载 KubeEdge 云端包** - 提取 cloudcore 二进制
 3. **下载 KubeEdge keadm** - 提取 keadm 二进制
-4. **下载容器镜像** - 使用 Docker 拉取并保存镜像为 tar 文件
-   - `rancher/mirrored-pause:3.6`
-   - `rancher/mirrored-coredns:1.11.1`
-   - `rancher/mirrored-metrics-server:v0.7.1`
-   - `rancher/local-path-provisioner:v0.0.30`
+4. **下载容器镜像** - 使用 Docker 拉取并保存镜像为 tar 文件 (对应 K3s v1.34.2+k3s1)
+   - `docker.io/rancher/klipper-helm:v0.9.10-build20251111`
+   - `docker.io/rancher/klipper-lb:v0.4.13`
+   - `docker.io/rancher/local-path-provisioner:v0.0.32`
+   - `docker.io/rancher/mirrored-coredns-coredns:1.13.1`
+   - `docker.io/rancher/mirrored-library-busybox:1.36.1`
+   - `docker.io/rancher/mirrored-library-traefik:3.5.1`
+   - `docker.io/rancher/mirrored-metrics-server:v0.8.0`
+   - `docker.io/rancher/mirrored-pause:3.6`
 5. **创建配置模板** - 生成 cloudcore 配置文件
 6. **打包** - 将所有文件和 install.sh 打包为 tar.gz
 

@@ -98,15 +98,20 @@ jobs:
           rm keadm.tar.gz
           echo "✓ KubeEdge keadm 下载完成"
           
-          # 4. 下载 k3s 容器镜像
+          # 4. 下载 k3s 容器镜像（对应 K3s v1.34.2+k3s1 版本）
           echo "[4/6] 下载 k3s 容器镜像..."
           mkdir -p images
           
+          # K3s v1.34.2+k3s1 官方镜像列表
           K3S_IMAGES=(
-            "rancher/mirrored-pause:3.6"
-            "rancher/mirrored-coredns:1.11.1"
-            "rancher/mirrored-metrics-server:v0.7.1"
-            "rancher/local-path-provisioner:v0.0.30"
+            "docker.io/rancher/klipper-helm:v0.9.10-build20251111"
+            "docker.io/rancher/klipper-lb:v0.4.13"
+            "docker.io/rancher/local-path-provisioner:v0.0.32"
+            "docker.io/rancher/mirrored-coredns-coredns:1.13.1"
+            "docker.io/rancher/mirrored-library-busybox:1.36.1"
+            "docker.io/rancher/mirrored-library-traefik:3.5.1"
+            "docker.io/rancher/mirrored-metrics-server:v0.8.0"
+            "docker.io/rancher/mirrored-pause:3.6"
           )
           
           for image in "${K3S_IMAGES[@]}"; do
