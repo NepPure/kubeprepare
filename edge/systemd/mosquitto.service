@@ -1,0 +1,38 @@
+[Unit]
+Description=Mosquitto MQTT Broker for KubeEdge IoT Devices
+Documentation=https://mosquitto.org/
+After=network-online.target containerd.service
+Wants=network-online.target
+Requires=containerd.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+TimeoutStartSec=0
+
+# 使用 ctr 运行 mosquitto 容器
+ExecStartPre=-/usr/bin/ctr -n k8s.io task kill --signal SIGTERM mosquitto
+ExecStartPre=-/usr/bin/ctr -n k8s.io task delete mosquitto
+ExecStartPre=-/usr/bin/ctr -n k8s.io container delete mosquitto
+ExecStartPre=/usr/bin/mkdir -p /var/lib/mosquitto/data /var/log/mosquitto
+
+ExecStart=/usr/bin/ctr -n k8s.io run \
+  --rm \
+  --net-host \
+  --mount type=bind,src=/var/lib/mosquitto/data,dst=/mosquitto/data,options=rbind:rw \
+  --mount type=bind,src=/var/log/mosquitto,dst=/mosquitto/log,options=rbind:rw \
+  docker.io/library/eclipse-mosquitto:2.0 \
+  mosquitto \
+  mosquitto -c /mosquitto-no-auth.conf
+
+ExecStop=/usr/bin/ctr -n k8s.io task kill --signal SIGTERM mosquitto
+ExecStopPost=/usr/bin/ctr -n k8s.io task delete mosquitto
+ExecStopPost=/usr/bin/ctr -n k8s.io container delete mosquitto
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mosquitto
+
+[Install]
+WantedBy=multi-user.target

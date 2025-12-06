@@ -268,6 +268,21 @@ jobs:
             echo "警告：无法下载 CNI 插件"
           fi
           
+          # 4.5. 下载 Mosquitto MQTT 镜像 (用于物联网设备管理)
+          echo "[4.5/6] 下载 Mosquitto MQTT 镜像..."
+          mkdir -p images
+          MQTT_IMAGE="eclipse-mosquitto:2.0"
+          
+          echo "  拉取 MQTT 镜像: $MQTT_IMAGE"
+          if docker pull --platform ${{ matrix.dockerfile_platform }} "$MQTT_IMAGE"; then
+            # 保存镜像为 tar 文件
+            docker save "$MQTT_IMAGE" -o "images/eclipse-mosquitto-2.0.tar"
+            echo "✓ Mosquitto MQTT 镜像已保存 (用于边缘节点的物联网设备连接)"
+            ls -lh images/eclipse-mosquitto-2.0.tar
+          else
+            echo "警告：Mosquitto 镜像下载失败，将影响设备管理功能"
+          fi
+          
           # 5. 创建配置模板
           echo "[5/6] 创建配置模板..."
           mkdir -p config/kubeedge
@@ -291,27 +306,42 @@ jobs:
               tlsEnable: true
             eventBus:
               enable: true
-              eventBusType: default
+              mqttMode: 2
+              mqttServerExternal: tcp://127.0.0.1:1883
+              mqttServerInternal: tcp://127.0.0.1:1884
+              mqttQOS: 0
+              mqttRetain: false
+              mqttSessionQueueSize: 100
             metaManager:
               enable: true
             deviceTwin:
               enable: true
+            dbTest:
+              enable: false
             funcManager:
               enable: false
             imagePrependHostname: true
             surfaceManager:
               enable: false
           EOFCONFIG
-          echo "✓ 配置模板已创建"
+          echo "✓ 配置模板已创建 (EventBus 配置连接到 localhost:1883 MQTT)"
           
-          # 5-b. 创建 edgecore systemd service 模板（避免 keadm 下载）
+          # 5-b. 创建 systemd service 模板（避免 keadm 下载）
           echo "[5/6-b] 创建 systemd service 模板..."
           mkdir -p systemd
+          
+          # 复制 mosquitto.service 模板
+          MOSQUITTO_SVC="${GITHUB_WORKSPACE}/edge/systemd/mosquitto.service"
+          if [ -f "$MOSQUITTO_SVC" ]; then
+            cp "$MOSQUITTO_SVC" systemd/
+            echo "✓ mosquitto.service 模板已包含"
+          fi
+          
           cat > systemd/edgecore.service << 'EOFSVC'
           [Unit]
           Description=KubeEdge EdgeCore
           Documentation=https://kubeedge.io
-          After=network-online.target
+          After=network-online.target mosquitto.service
           Wants=network-online.target
           
           [Service]
@@ -352,8 +382,10 @@ jobs:
           tar -czf "$PACKAGE_NAME" \
             edgecore \
             keadm \
+            bin \
             runc \
             cni-plugins \
+            images \
             config \
             systemd \
             meta \
@@ -361,6 +393,13 @@ jobs:
           
           echo "✓ 包已创建: $PACKAGE_NAME"
           echo "包大小: $(du -h "$PACKAGE_NAME" | cut -f1)"
+          
+          # 显示包内容摘要
+          echo ""
+          echo "包内容摘要:"
+          tar -tzf "$PACKAGE_NAME" | head -20
+          echo "..."
+          echo "总文件数: $(tar -tzf "$PACKAGE_NAME" | wc -l)"
 
       - name: 生成校验和并准备发布文件
         run: |

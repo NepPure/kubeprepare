@@ -50,14 +50,40 @@
 ```
 kubeedge-edge-<版本>-<架构>.tar.gz
 ├── edgecore                       # KubeEdge EdgeCore 二进制文件
-├── containerd-<arch>              # containerd 二进制文件
+├── keadm                          # KubeEdge 管理工具
+├── bin/                           # containerd 二进制文件
+│   ├── containerd
+│   ├── containerd-shim-runc-v2
+│   └── ctr
 ├── runc                           # runc 二进制文件
-├── cni-plugins/                   # CNI 插件
-├── install.sh                     # 安装脚本
-└── config/
-    └── kubeedge/
-        └── edgecore-config.yaml   # 默认 EdgeCore 配置
+├── cni-plugins/                   # CNI 网络插件
+├── images/                        # 容器镜像 (离线)
+│   └── eclipse-mosquitto-2.0.tar  # MQTT Broker 镜像 (~10MB)
+├── config/                        # 配置模板
+│   └── kubeedge/
+│       └── edgecore-config.yaml   # EdgeCore 配置 (已配置 MQTT)
+├── systemd/                       # Systemd 服务文件
+│   ├── edgecore.service           # EdgeCore 服务
+│   └── mosquitto.service          # MQTT Broker 服务
+├── meta/                          # 元数据信息
+│   └── version.txt                # 版本信息
+└── install.sh                     # 一键安装脚本
 ```
+
+## 物联网设备管理 (MQTT)
+
+**自动部署**: 安装脚本会自动完成以下操作：
+
+1. ✅ 导入 Mosquitto MQTT 镜像到 containerd
+2. ✅ 使用 systemd 启动 MQTT 容器 (监听 localhost:1883)
+3. ✅ 配置 EdgeCore EventBus 连接到本地 MQTT
+4. ✅ MQTT 作为系统服务运行,开机自启
+
+**特点**:
+- MQTT 以**容器方式**运行,但**不是 Kubernetes Pod**
+- 使用 systemd 管理生命周期: `systemctl status mosquitto`
+- 仅本地访问 (127.0.0.1:1883),安全可靠
+- 完全离线部署,无需网络下载
 
 ## 安装步骤
 

@@ -119,6 +119,71 @@ else
   echo "Warning: CNI plugins not found" | tee -a "$INSTALL_LOG"
 fi
 
+# Deploy Mosquitto MQTT Broker for IoT devices
+echo "[4.5/6] Deploying Mosquitto MQTT Broker for IoT devices..." | tee -a "$INSTALL_LOG"
+IMAGES_DIR=$(find "$SCRIPT_DIR" -type d -name "images" 2>/dev/null | head -1)
+MQTT_DEPLOYED=false
+
+if [ -n "$IMAGES_DIR" ] && [ -d "$IMAGES_DIR" ]; then
+  MQTT_IMAGE_TAR=$(find "$IMAGES_DIR" -name "*mosquitto*.tar" -type f 2>/dev/null | head -1)
+  
+  if [ -n "$MQTT_IMAGE_TAR" ] && [ -f "$MQTT_IMAGE_TAR" ]; then
+    echo "  导入 Mosquitto MQTT 镜像..." | tee -a "$INSTALL_LOG"
+    
+    # 确保 containerd 正在运行
+    if ! systemctl is-active --quiet containerd 2>/dev/null; then
+      echo "    启动 containerd..." | tee -a "$INSTALL_LOG"
+      systemctl start containerd || echo "    警告: 无法启动 containerd" | tee -a "$INSTALL_LOG"
+      sleep 2
+    fi
+    
+    # 导入镜像到 containerd
+    if command -v ctr &> /dev/null; then
+      if ctr -n k8s.io images import "$MQTT_IMAGE_TAR" >> "$INSTALL_LOG" 2>&1; then
+        echo "  ✓ MQTT 镜像已导入到 containerd" | tee -a "$INSTALL_LOG"
+        
+        # 安装 mosquitto systemd service
+        if [ -n "$SYSTEMD_DIR" ] && [ -f "$SYSTEMD_DIR/mosquitto.service" ]; then
+          cp "$SYSTEMD_DIR/mosquitto.service" /etc/systemd/system/mosquitto.service
+          systemctl daemon-reload
+          systemctl enable mosquitto
+          systemctl start mosquitto
+          
+          # 等待 MQTT 启动
+          echo "    等待 MQTT broker 启动..." | tee -a "$INSTALL_LOG"
+          for i in {1..10}; do
+            if systemctl is-active --quiet mosquitto; then
+              echo "  ✓ MQTT Broker 已启动 (localhost:1883)" | tee -a "$INSTALL_LOG"
+              MQTT_DEPLOYED=true
+              break
+            fi
+            sleep 1
+          done
+          
+          if ! $MQTT_DEPLOYED; then
+            echo "  ⚠️  MQTT 启动超时,请检查: systemctl status mosquitto" | tee -a "$INSTALL_LOG"
+          fi
+        else
+          echo "  ⚠️  mosquitto.service 模板未找到" | tee -a "$INSTALL_LOG"
+        fi
+      else
+        echo "  ⚠️  MQTT 镜像导入失败" | tee -a "$INSTALL_LOG"
+      fi
+    else
+      echo "  ⚠️  ctr 命令未找到,无法导入 MQTT 镜像" | tee -a "$INSTALL_LOG"
+    fi
+  else
+    echo "  ⚠️  MQTT 镜像未在离线包中找到" | tee -a "$INSTALL_LOG"
+  fi
+else
+  echo "  ⚠️  images 目录未找到" | tee -a "$INSTALL_LOG"
+fi
+
+if ! $MQTT_DEPLOYED; then
+  echo "  注意: MQTT broker 未部署,设备管理功能将不可用" | tee -a "$INSTALL_LOG"
+  echo "  可以稍后手动部署: systemctl start mosquitto" | tee -a "$INSTALL_LOG"
+fi
+
 # Install EdgeCore
 echo "[5/6] Installing EdgeCore..." | tee -a "$INSTALL_LOG"
 cp "$EDGECORE_BIN" /usr/local/bin/edgecore
