@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号（可选，用于手动触发）'
+        description: '版本号（用于手动触发）'
         required: false
         type: string
 
