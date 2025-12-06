@@ -85,21 +85,23 @@ for cmd in systemctl; do
   fi
 done
 
-# Check for containerd (optional, EdgeCore can use other container runtimes)
-if ! command -v containerd &> /dev/null; then
-  echo "Warning: containerd not found. Will attempt to install from offline package." | tee -a "$INSTALL_LOG"
-  
-  # Try to install containerd from package
-  CONTAINERD_DIR=$(find "$SCRIPT_DIR" -type d -name "bin" 2>/dev/null | head -1)
-  if [ -n "$CONTAINERD_DIR" ] && [ -f "$CONTAINERD_DIR/containerd" ]; then
-    echo "Installing containerd from offline package..." | tee -a "$INSTALL_LOG"
-    cp "$CONTAINERD_DIR/containerd" /usr/local/bin/
-    cp "$CONTAINERD_DIR/containerd-shim-runc-v2" /usr/local/bin/
-    cp "$CONTAINERD_DIR/ctr" /usr/local/bin/
-    chmod +x /usr/local/bin/containerd*
-    chmod +x /usr/local/bin/ctr
-  fi
+# 强制从离线包安装 containerd（确保版本一致性）
+echo "Installing containerd from offline package..." | tee -a "$INSTALL_LOG"
+CONTAINERD_DIR=$(find "$SCRIPT_DIR" -type d -name "bin" 2>/dev/null | head -1)
+if [ -n "$CONTAINERD_DIR" ] && [ -f "$CONTAINERD_DIR/containerd" ]; then
+  cp "$CONTAINERD_DIR/containerd" /usr/local/bin/
+  cp "$CONTAINERD_DIR/containerd-shim-runc-v2" /usr/local/bin/
+  cp "$CONTAINERD_DIR/ctr" /usr/local/bin/
+  chmod +x /usr/local/bin/containerd*
+  chmod +x /usr/local/bin/ctr
+  echo "✓ containerd binaries installed" | tee -a "$INSTALL_LOG"
+else
+  echo "Error: containerd not found in offline package" | tee -a "$INSTALL_LOG"
+  exit 1
 fi
+
+CONTAINERD_BIN="/usr/local/bin/containerd"
+CTR_BIN="/usr/local/bin/ctr"
 
 # Configure and start containerd
 echo "Configuring containerd..." | tee -a "$INSTALL_LOG"
@@ -122,9 +124,8 @@ version = 2
       conf_dir = "/etc/cni/net.d"
 CONTAINERD_EOF
 
-# Create containerd systemd service if not exists
-if [ ! -f /etc/systemd/system/containerd.service ]; then
-  cat > /etc/systemd/system/containerd.service << 'CONTAINERD_SVC_EOF'
+# Create containerd systemd service (使用检测到的路径)
+cat > /etc/systemd/system/containerd.service << CONTAINERD_SVC_EOF
 [Unit]
 Description=containerd container runtime
 Documentation=https://containerd.io
@@ -132,7 +133,7 @@ After=network.target local-fs.target
 
 [Service]
 ExecStartPre=-/sbin/modprobe overlay
-ExecStart=/usr/local/bin/containerd
+ExecStart=$CONTAINERD_BIN
 Type=notify
 Delegate=yes
 KillMode=process
@@ -147,8 +148,7 @@ OOMScoreAdjust=-999
 [Install]
 WantedBy=multi-user.target
 CONTAINERD_SVC_EOF
-  echo "✓ containerd service file created" | tee -a "$INSTALL_LOG"
-fi
+echo "✓ containerd service file created" | tee -a "$INSTALL_LOG"
 
 # Start containerd
 systemctl daemon-reload
@@ -172,7 +172,7 @@ fi
 
 echo "✓ Prerequisites checked" | tee -a "$INSTALL_LOG"
 
-# Install runc
+# Install runc (强制从离线包安装)
 echo "[3/6] Installing runc..." | tee -a "$INSTALL_LOG"
 RUNC_BIN=$(find "$SCRIPT_DIR" -name "runc" -type f 2>/dev/null | head -1)
 if [ -n "$RUNC_BIN" ] && [ -f "$RUNC_BIN" ]; then
@@ -180,10 +180,11 @@ if [ -n "$RUNC_BIN" ] && [ -f "$RUNC_BIN" ]; then
   chmod +x /usr/local/bin/runc
   echo "✓ runc installed" | tee -a "$INSTALL_LOG"
 else
-  echo "Warning: runc not found, will use system default" | tee -a "$INSTALL_LOG"
+  echo "Error: runc not found in offline package" | tee -a "$INSTALL_LOG"
+  exit 1
 fi
 
-# Install CNI plugins
+# Install CNI plugins (强制从离线包安装)
 echo "[4/6] Installing CNI plugins..." | tee -a "$INSTALL_LOG"
 CNI_DIR=$(find "$SCRIPT_DIR" -type d -name "cni-plugins" 2>/dev/null | head -1)
 if [ -n "$CNI_DIR" ] && [ -d "$CNI_DIR" ]; then
@@ -192,7 +193,8 @@ if [ -n "$CNI_DIR" ] && [ -d "$CNI_DIR" ]; then
   chmod +x /opt/cni/bin/*
   echo "✓ CNI plugins installed" | tee -a "$INSTALL_LOG"
 else
-  echo "Warning: CNI plugins not found" | tee -a "$INSTALL_LOG"
+  echo "Error: CNI plugins not found in offline package" | tee -a "$INSTALL_LOG"
+  exit 1
 fi
 
 
@@ -214,13 +216,13 @@ if [ -n "$IMAGES_DIR" ] && [ -d "$IMAGES_DIR" ]; then
       sleep 2
     fi
     
-    # 导入镜像到 containerd
-    if command -v ctr &> /dev/null; then
-      if ctr -n k8s.io images import "$MQTT_IMAGE_TAR" >> "$INSTALL_LOG" 2>&1; then
+    # 导入镜像到 containerd（使用离线包提供的 ctr）
+    if [ -f "$CTR_BIN" ]; then
+      if "$CTR_BIN" -n k8s.io images import "$MQTT_IMAGE_TAR" >> "$INSTALL_LOG" 2>&1; then
         echo "  ✓ MQTT 镜像已导入到 containerd" | tee -a "$INSTALL_LOG"
         
-        # 创建 mosquitto systemd service
-        cat > /etc/systemd/system/mosquitto.service << 'MOSQUITTO_SVC_EOF'
+        # 创建 mosquitto systemd service（使用离线包 ctr 的绝对路径）
+        cat > /etc/systemd/system/mosquitto.service << MOSQUITTO_SVC_EOF
 [Unit]
 Description=Mosquitto MQTT Broker for KubeEdge IoT Devices
 Documentation=https://mosquitto.org/
@@ -235,12 +237,12 @@ RestartSec=5
 TimeoutStartSec=0
 
 # 使用 ctr 运行 mosquitto 容器
-ExecStartPre=-/usr/bin/ctr -n k8s.io task kill --signal SIGTERM mosquitto
-ExecStartPre=-/usr/bin/ctr -n k8s.io task delete mosquitto
-ExecStartPre=-/usr/bin/ctr -n k8s.io container delete mosquitto
-ExecStartPre=/usr/bin/mkdir -p /var/lib/mosquitto/data /var/log/mosquitto
+ExecStartPre=-$CTR_BIN -n k8s.io task kill --signal SIGTERM mosquitto
+ExecStartPre=-$CTR_BIN -n k8s.io task delete mosquitto
+ExecStartPre=-$CTR_BIN -n k8s.io container delete mosquitto
+ExecStartPre=/bin/mkdir -p /var/lib/mosquitto/data /var/log/mosquitto
 
-ExecStart=/usr/bin/ctr -n k8s.io run \
+ExecStart=$CTR_BIN -n k8s.io run \
   --rm \
   --net-host \
   --mount type=bind,src=/var/lib/mosquitto/data,dst=/mosquitto/data,options=rbind:rw \
@@ -249,9 +251,9 @@ ExecStart=/usr/bin/ctr -n k8s.io run \
   mosquitto \
   mosquitto -c /mosquitto-no-auth.conf
 
-ExecStop=/usr/bin/ctr -n k8s.io task kill --signal SIGTERM mosquitto
-ExecStopPost=/usr/bin/ctr -n k8s.io task delete mosquitto
-ExecStopPost=/usr/bin/ctr -n k8s.io container delete mosquitto
+ExecStop=$CTR_BIN -n k8s.io task kill --signal SIGTERM mosquitto
+ExecStopPost=$CTR_BIN -n k8s.io task delete mosquitto
+ExecStopPost=$CTR_BIN -n k8s.io container delete mosquitto
 
 StandardOutput=journal
 StandardError=journal

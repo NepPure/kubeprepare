@@ -209,17 +209,32 @@ if [ "$IS_EDGE" = true ]; then
   done
   echo "  ✓ 挂载点已卸载"
 
-  # 6. 删除二进制文件
-  echo "[6/8] 删除边缘端二进制文件..."
+  # 6. 删除二进制文件（所有可能位置）
+  echo "[6/8] 删除边缘端二进制文件（包括系统安装的版本）..."
+  # 删除 EdgeCore 和 keadm
   rm -f /usr/local/bin/edgecore
-  rm -f /usr/local/bin/containerd
-  rm -f /usr/local/bin/containerd-shim
-  rm -f /usr/local/bin/containerd-shim-runc-v2
-  rm -f /usr/local/bin/ctr
-  rm -f /usr/local/bin/runc
   rm -f /usr/local/bin/keadm
+  # 删除 containerd 所有位置
+  rm -f /usr/local/bin/containerd*
+  rm -f /usr/bin/containerd*
+  rm -f /usr/sbin/containerd*
+  rm -f /usr/local/bin/ctr
+  rm -f /usr/bin/ctr
+  # 删除 runc 所有位置
+  rm -f /usr/local/bin/runc
+  rm -f /usr/local/sbin/runc
+  rm -f /usr/bin/runc
+  rm -f /usr/sbin/runc
+  # 如果通过 apt 安装的 containerd，尝试卸载
+  if command -v dpkg &> /dev/null && dpkg -l | grep -q containerd.io; then
+    apt-get remove -y containerd.io 2>/dev/null || true
+    apt-get purge -y containerd.io 2>/dev/null || true
+    echo "  ✓ 已卸载系统安装的 containerd.io"
+  fi
+  # 删除系统服务文件
+  rm -f /lib/systemd/system/containerd.service
   systemctl daemon-reload
-  echo "  ✓ 二进制文件已删除"
+  echo "  ✓ 二进制文件已删除（所有位置）"
 
   # 7. 删除 CNI 插件
   echo "[7/8] 删除 CNI 插件..."
