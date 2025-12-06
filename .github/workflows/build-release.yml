@@ -17,6 +17,8 @@ permissions:
 
 jobs:
   build:
+    outputs:
+      tag_version: ${{ steps.set_env.outputs.tag_version }}
     runs-on: ubuntu-latest
     name: 构建离线包 (${{ matrix.arch }})
     strategy:
@@ -41,13 +43,23 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: 设置环境变量
+        id: set_env
         run: |
-          if [ -z "${{ github.event.inputs.version }}" ]; then
-            TAG_VERSION=${GITHUB_REF#refs/tags/}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -z "${{ github.event.inputs.version }}" ]; then
+              echo "error: 手动触发需要提供 version (例如 v1.0.0)" >&2
+              exit 1
+            fi
+            TAG_VERSION="${{ github.event.inputs.version }}"
           else
-            TAG_VERSION=${{ github.event.inputs.version }}
+            TAG_VERSION=${GITHUB_REF#refs/tags/}
+            if [ -z "$TAG_VERSION" ]; then
+              echo "error: 未能解析到 tag，请使用 tag 触发或在手动触发时提供 version" >&2
+              exit 1
+            fi
           fi
           echo "TAG_VERSION=${TAG_VERSION}" >> $GITHUB_ENV
+          echo "tag_version=${TAG_VERSION}" >> $GITHUB_OUTPUT
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BUILD_DIR=$(pwd)/build-${{ matrix.arch }}" >> $GITHUB_ENV
 
@@ -333,6 +345,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     name: 发布到 GitHub Release
+    env:
+      TAG_VERSION: ${{ needs.build.outputs.tag_version }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -341,6 +355,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release_files
+
+      - name: 验证构建产物
+        run: |
+          if [ ! -d release_files ] || ! find release_files -type f | grep -q .; then
+            echo "未找到任何构建产物，release_files 为空" >&2
+            find release_files -maxdepth 2 -type f 2>/dev/null || true
+            exit 1
+          fi
+          echo "已下载的构建产物:"
+          find release_files -type f
 
       - name: 合并所有文件
         run: |
@@ -361,6 +385,7 @@ jobs:
       - name: 创建 Release 并上传资产
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ env.TAG_VERSION }}
           files: |
             final_release/kubeedge-cloud-*.tar.gz
             final_release/kubeedge-edge-*.tar.gz
@@ -370,11 +395,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 清理
-        if: always()
-        run: |
-          rm -rf release_files final_release
-
       - name: 上传产物到 GitHub Actions 归档
         if: always()
         uses: actions/upload-artifact@v4
@@ -383,3 +403,8 @@ jobs:
           path: release_files/
           retention-days: 90
           if-no-files-found: warn
+
+      - name: 清理
+        if: always()
+        run: |
+          rm -rf release_files final_release
