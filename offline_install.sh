@@ -1,36 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: sudo ./offline_install.sh <offline-package-path> <cloud_url> <token> [node_name]
-# Example: sudo ./offline_install.sh /root/kubeedge-edge-offline-v1.22.tar.gz "wss://10.0.0.1:10000/edge/node01" "mytoken" node01
+# Usage: sudo ./offline_install.sh <cloud_url> <token> [node_name]
+# Example: sudo ./offline_install.sh "wss://10.0.0.1:10000/edge/node01" "mytoken" node01
+# Note: Run this script from the directory where the offline package is extracted
 
 if [ "$EUID" -ne 0 ]; then
   echo "Please run as root or with sudo"
   exit 1
 fi
 
-if [ $# -lt 3 ]; then
-  echo "Usage: $0 <offline-package-path> <cloud_url> <token> [node_name]"
+if [ $# -lt 2 ]; then
+  echo "Usage: $0 <cloud_url> <token> [node_name]"
   exit 2
 fi
 
-PKG_PATH="$1"
-CLOUD_URL="$2"
-TOKEN="$3"
-NODE_NAME="${4:-$(hostname -s)}"
+CLOUD_URL="$1"
+TOKEN="$2"
+NODE_NAME="${3:-$(hostname -s)}"
 
-WORKDIR="/tmp/kubeedge_offline_install_$$"
-mkdir -p "$WORKDIR"
-cd "$WORKDIR"
-
-echo "Extracting package: $PKG_PATH"
-tar -zxf "$PKG_PATH" -C .
-
-# Expect to find: bin/edgecore, containerd/bin/*, cni/bin/*, etc/edgecore.yaml.tmpl
+# Check if we're in the extracted package directory
 if [ ! -f "bin/edgecore" ]; then
-  echo "edgecore binary not found in package"
+  echo "Error: edgecore binary not found in current directory"
+  echo "Please run this script from the directory where the offline package is extracted"
   exit 3
 fi
+
+echo "Installing from current directory: $(pwd)"
+WORKDIR="$(pwd)"
 
 # 1) Install containerd and runc
 echo "Installing containerd and runc..."
@@ -137,7 +134,9 @@ if command -v containerd >/dev/null 2>&1; then
   echo "containerd enabled & restarted"
 fi
 
-# Cleanup
-rm -rf "$WORKDIR"
+# Cleanup is optional now since we're working in the extracted directory
+# Don't delete the entire directory as it contains the extracted files
+# rm -rf "$WORKDIR"
 
-echo "Installation finished. 在 CloudCore 上检查节点是否加入： kubectl get nodes (在 cloud/k8s 控制面上)"
+echo "Installation finished. Check status with: systemctl status edgecore -l"
+echo "在 CloudCore 上检查节点是否加入： kubectl get nodes (在 cloud/k8s 控制面上)"

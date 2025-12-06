@@ -42,7 +42,7 @@ git push origin v1.22.0
 ### 3. 获取发布的包
 
 构建完成后，在 GitHub 仓库的 "Releases" 页面将出现：
-- `kubeedge-edge-offline-vX.X.X.tar.gz` - 离线安装包
+- `kubeedge-edge-offline-vX.X.X.tar.gz` - 离线安装包（包含离线安装脚本）
 - `checksums.txt` - SHA256 校验文件
 
 ## 配置说明

@@ -113,13 +113,14 @@ edgeHub:
   token: "__TOKEN__"
 YAML
 
-# Make a small install helper script stub for offline side
-cat > pkg/install_helper.sh <<'HELP'
-#!/usr/bin/env bash
-set -euo pipefail
-# This helper will be executed on the edge node by offline_install.sh
-HELP
-chmod +x pkg/install_helper.sh
+# Copy offline_install.sh into the package
+echo "Copying offline_install.sh..."
+if [ -f "../offline_install.sh" ]; then
+  cp ../offline_install.sh pkg/
+  chmod +x pkg/offline_install.sh
+else
+  echo "Warning: offline_install.sh not found in parent directory"
+fi
 
 # Package everything
 echo ""
@@ -139,5 +140,7 @@ echo "  Size: $(du -h "$OUTPUT_TAR" | cut -f1)"
 echo ""
 echo "Next steps:"
 echo "  1. Transfer $OUTPUT_TAR to the edge node"
-echo "  2. Run: sudo ./offline_install.sh $OUTPUT_TAR \"wss://CLOUD_IP:10000/edge/NODE_ID\" \"TOKEN\" NODE_NAME"
+echo "  2. Extract: tar -zxf $OUTPUT_TAR"
+echo "  3. Enter directory: cd kubeedge-edge-offline-v${KUBEEDGE_VER}"
+echo "  4. Run: sudo ./offline_install.sh \"wss://CLOUD_IP:10000/edge/NODE_ID\" \"TOKEN\" [NODE_NAME]"
 echo ""
