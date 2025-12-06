@@ -121,6 +121,7 @@ EdgeMesh 提供边缘服务发现和流量代理：
 - [云端安装指南](./cloud/install/README.md)
 - [边缘端安装指南](./edge/install/README.md)
 - [EdgeMesh 部署指南](./EDGEMESH_DEPLOYMENT.md) - 边缘服务网格部署
+- [EdgeCore 配置最佳实践](./EDGECORE_CONFIG_BEST_PRACTICES.md) - EdgeCore + EdgeMesh 配置说明
 - [离线镜像修复报告](./OFFLINE_IMAGE_FIX.md) - 完整离线支持的技术细节
 
 ## 验证工具
