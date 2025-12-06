@@ -113,10 +113,13 @@ Type=notify
 ExecStart=/usr/local/bin/k3s server \\
   --advertise-address=$EXTERNAL_IP \\
   --node-name=$NODE_NAME \\
+  --tls-san=$EXTERNAL_IP \\
+  --bind-address=0.0.0.0 \\
   --disable=traefik \\
   --disable=servicelb \\
   --disable=local-storage \\
   --kube-apiserver-arg=bind-address=0.0.0.0 \\
+  --kube-apiserver-arg=advertise-address=$EXTERNAL_IP \\
   --kube-controller-manager-arg=bind-address=0.0.0.0 \\
   --kube-scheduler-arg=bind-address=0.0.0.0
 KillMode=process
