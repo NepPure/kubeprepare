@@ -14,7 +14,7 @@ fi
 EXTERNAL_IP="${1:-}"
 NODE_NAME="${2:-k3s-master}"
 KUBEEDGE_VERSION="1.22.0"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_LOG="/var/log/kubeedge-cloud-install.log"
 
 # 验证外网 IP
