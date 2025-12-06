@@ -143,8 +143,6 @@ SYSTEMD_DIR=$(find "$SCRIPT_DIR" -type d -name "systemd" 2>/dev/null | head -1)
 if [ -n "$SYSTEMD_DIR" ] && [ -f "$SYSTEMD_DIR/edgecore.service" ]; then
   echo "  使用离线包中的 systemd service 文件..." | tee -a "$INSTALL_LOG"
   cp "$SYSTEMD_DIR/edgecore.service" /etc/systemd/system/edgecore.service
-  # 确保 ExecStart 指向正确的配置文件
-  sed -i 's|ExecStart=.*|ExecStart=/usr/local/bin/edgecore --config=/etc/kubeedge/edgecore.yaml|g' /etc/systemd/system/edgecore.service || true
   echo "  ✓ systemd service 已从离线包安装" | tee -a "$INSTALL_LOG"
 else
   echo "  离线包中未找到 service 文件，创建默认配置..." | tee -a "$INSTALL_LOG"

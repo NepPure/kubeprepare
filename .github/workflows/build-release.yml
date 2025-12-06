@@ -214,12 +214,12 @@ jobs:
           
           # 1. 下载 KubeEdge 边缘端包
           echo "[1/6] 下载 KubeEdge 边缘端包..."
-          EDGESITE_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/edgesite-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
-          wget -q -O edgesite.tar.gz "$EDGESITE_URL" || (echo "错误：无法下载 KubeEdge 边缘端包" && exit 1)
-          tar -xzf edgesite.tar.gz
-          cp edgesite-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}/edgesite/edgesite-agent ./edgecore
+          KUBEEDGE_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/kubeedge-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          wget -q -O kubeedge.tar.gz "$KUBEEDGE_URL" || (echo "错误：无法下载 KubeEdge 边缘端包" && exit 1)
+          tar -xzf kubeedge.tar.gz
+          cp kubeedge-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}/edge/edgecore ./edgecore
           chmod +x ./edgecore
-          rm edgesite.tar.gz
+          rm -rf kubeedge.tar.gz kubeedge-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}
           echo "✓ KubeEdge 边缘端包下载完成"
           
           # 2. 下载 KubeEdge keadm
@@ -316,7 +316,7 @@ jobs:
           
           [Service]
           Type=simple
-          ExecStart=/usr/local/bin/edgecore
+          ExecStart=/usr/local/bin/edgecore --config=/etc/kubeedge/edgecore.yaml
           Restart=always
           RestartSec=5
           StandardOutput=journal
