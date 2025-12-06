@@ -63,6 +63,82 @@ if [ -n "$META_DIR" ] && [ -f "$META_DIR/version.txt" ]; then
   echo "" | tee -a "$INSTALL_LOG"
 fi
 
+# Check for existing components
+echo "[0/6] Checking for existing components..." | tee -a "$INSTALL_LOG"
+
+HAS_EDGECORE=false
+HAS_DOCKER=false
+HAS_SYSTEM_CONTAINERD=false
+USE_SYSTEM_CONTAINERD=false
+
+# Check for existing EdgeCore
+if [ -f /usr/local/bin/edgecore ] || systemctl list-units --full -all 2>/dev/null | grep -q "edgecore.service"; then
+  HAS_EDGECORE=true
+  echo "⚠️  警告: 检测到系统已安装 EdgeCore" | tee -a "$INSTALL_LOG"
+  echo "   现有 EdgeCore 安装位置: /usr/local/bin/edgecore" | tee -a "$INSTALL_LOG"
+  echo "   如需重新安装，请先运行清理脚本: sudo ./cleanup.sh" | tee -a "$INSTALL_LOG"
+  echo "" | tee -a "$INSTALL_LOG"
+  read -p "是否继续？这将覆盖现有安装 (y/N): " -n 1 -r
+  echo ""
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "❌ 用户取消安装" | tee -a "$INSTALL_LOG"
+    exit 1
+  fi
+fi
+
+# Check for Docker
+if systemctl list-units --full -all 2>/dev/null | grep -q "docker.service" || command -v docker &> /dev/null; then
+  HAS_DOCKER=true
+  echo "❌ 错误: 检测到系统已安装 Docker" | tee -a "$INSTALL_LOG"
+  echo "   Docker 使用自己的 containerd，与 EdgeCore 的 containerd 冲突" | tee -a "$INSTALL_LOG"
+  echo "   Edge 节点不应同时运行 Docker 和 EdgeCore" | tee -a "$INSTALL_LOG"
+  echo "" | tee -a "$INSTALL_LOG"
+  echo "请选择以下操作之一：" | tee -a "$INSTALL_LOG"
+  echo "  1. 运行清理脚本卸载 Docker: sudo ./cleanup.sh" | tee -a "$INSTALL_LOG"
+  echo "  2. 手动停止 Docker: sudo systemctl stop docker && sudo systemctl disable docker" | tee -a "$INSTALL_LOG"
+  exit 1
+fi
+
+# Check for system-installed containerd
+if command -v containerd &> /dev/null; then
+  CONTAINERD_PATH=$(command -v containerd)
+  HAS_SYSTEM_CONTAINERD=true
+  echo "ℹ️  检测到系统已安装 containerd: $CONTAINERD_PATH" | tee -a "$INSTALL_LOG"
+  
+  # Check if it's from package manager
+  if dpkg -l 2>/dev/null | grep -q "containerd.io" || rpm -qa 2>/dev/null | grep -q "containerd.io"; then
+    echo "   来源: 系统包管理器 (apt/yum)" | tee -a "$INSTALL_LOG"
+  else
+    echo "   来源: 手动安装或其他方式" | tee -a "$INSTALL_LOG"
+  fi
+  
+  # Check if containerd is running
+  if systemctl is-active --quiet containerd 2>/dev/null; then
+    echo "   状态: 正在运行" | tee -a "$INSTALL_LOG"
+    echo "" | tee -a "$INSTALL_LOG"
+    echo "选项:" | tee -a "$INSTALL_LOG"
+    echo "  1. 使用系统现有的 containerd (推荐，保持系统一致性)" | tee -a "$INSTALL_LOG"
+    echo "  2. 覆盖为离线包的 containerd (可能导致版本不兼容)" | tee -a "$INSTALL_LOG"
+    echo "" | tee -a "$INSTALL_LOG"
+    read -p "是否使用系统现有的 containerd？(Y/n): " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+      USE_SYSTEM_CONTAINERD=true
+      echo "✓ 将使用系统现有的 containerd: $CONTAINERD_PATH" | tee -a "$INSTALL_LOG"
+    else
+      echo "⚠️  将停止并覆盖系统 containerd" | tee -a "$INSTALL_LOG"
+      systemctl stop containerd 2>/dev/null || true
+    fi
+  else
+    echo "   状态: 未运行" | tee -a "$INSTALL_LOG"
+    echo "   将使用系统现有的 containerd" | tee -a "$INSTALL_LOG"
+    USE_SYSTEM_CONTAINERD=true
+  fi
+fi
+
+echo "✓ Component check completed" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+
 # Find binaries
 echo "[1/6] Locating binaries..." | tee -a "$INSTALL_LOG"
 EDGECORE_BIN=$(find "$SCRIPT_DIR" -name "edgecore" -type f 2>/dev/null | head -1)
@@ -85,28 +161,50 @@ for cmd in systemctl; do
   fi
 done
 
-# 强制从离线包安装 containerd（确保版本一致性）
-echo "Installing containerd from offline package..." | tee -a "$INSTALL_LOG"
-CONTAINERD_DIR=$(find "$SCRIPT_DIR" -type d -name "bin" 2>/dev/null | head -1)
-if [ -n "$CONTAINERD_DIR" ] && [ -f "$CONTAINERD_DIR/containerd" ]; then
-  cp "$CONTAINERD_DIR/containerd" /usr/local/bin/
-  cp "$CONTAINERD_DIR/containerd-shim-runc-v2" /usr/local/bin/
-  cp "$CONTAINERD_DIR/ctr" /usr/local/bin/
+# Install or use existing containerd
+if [ "$USE_SYSTEM_CONTAINERD" = true ]; then
+  echo "Using existing system containerd..." | tee -a "$INSTALL_LOG"
+  CONTAINERD_BIN=$(command -v containerd)
+  CTR_BIN=$(command -v ctr)
+  echo "  containerd: $CONTAINERD_BIN" | tee -a "$INSTALL_LOG"
+  echo "  ctr: $CTR_BIN" | tee -a "$INSTALL_LOG"
+  
+  # Check if containerd is running
+  if ! systemctl is-active --quiet containerd; then
+    echo "  Starting existing containerd service..." | tee -a "$INSTALL_LOG"
+    systemctl start containerd || {
+      echo "Error: Failed to start existing containerd" | tee -a "$INSTALL_LOG"
+      exit 1
+    }
+  fi
+  
+  echo "✓ Using system containerd (will not modify system configuration)" | tee -a "$INSTALL_LOG"
+  SKIP_CONTAINERD_INSTALL=true
+else
+  echo "Installing containerd from offline package..." | tee -a "$INSTALL_LOG"
+  CONTAINERD_DIR=$(find "$SCRIPT_DIR" -type d -name "bin" 2>/dev/null | head -1)
+  if [ -n "$CONTAINERD_DIR" ] && [ -f "$CONTAINERD_DIR/containerd" ]; then
+    cp "$CONTAINERD_DIR/containerd" /usr/local/bin/
+    cp "$CONTAINERD_DIR/containerd-shim-runc-v2" /usr/local/bin/
+    cp "$CONTAINERD_DIR/ctr" /usr/local/bin/
   chmod +x /usr/local/bin/containerd*
   chmod +x /usr/local/bin/ctr
-  echo "✓ containerd binaries installed" | tee -a "$INSTALL_LOG"
-else
-  echo "Error: containerd not found in offline package" | tee -a "$INSTALL_LOG"
-  exit 1
+    echo "✓ containerd binaries installed" | tee -a "$INSTALL_LOG"
+  else
+    echo "Error: containerd not found in offline package" | tee -a "$INSTALL_LOG"
+    exit 1
+  fi
+
+  CONTAINERD_BIN="/usr/local/bin/containerd"
+  CTR_BIN="/usr/local/bin/ctr"
+  SKIP_CONTAINERD_INSTALL=false
 fi
 
-CONTAINERD_BIN="/usr/local/bin/containerd"
-CTR_BIN="/usr/local/bin/ctr"
-
-# Configure and start containerd
-echo "Configuring containerd..." | tee -a "$INSTALL_LOG"
-mkdir -p /etc/containerd
-cat > /etc/containerd/config.toml << 'CONTAINERD_EOF'
+# Configure and start containerd (only if installing from offline package)
+if [ "$SKIP_CONTAINERD_INSTALL" != true ]; then
+  echo "Configuring containerd..." | tee -a "$INSTALL_LOG"
+  mkdir -p /etc/containerd
+  cat > /etc/containerd/config.toml << 'CONTAINERD_EOF'
 version = 2
 
 [plugins]
@@ -124,8 +222,8 @@ version = 2
       conf_dir = "/etc/cni/net.d"
 CONTAINERD_EOF
 
-# Create containerd systemd service (使用检测到的路径)
-cat > /etc/systemd/system/containerd.service << CONTAINERD_SVC_EOF
+  # Create containerd systemd service (使用检测到的路径)
+  cat > /etc/systemd/system/containerd.service << CONTAINERD_SVC_EOF
 [Unit]
 Description=containerd container runtime
 Documentation=https://containerd.io
@@ -148,26 +246,29 @@ OOMScoreAdjust=-999
 [Install]
 WantedBy=multi-user.target
 CONTAINERD_SVC_EOF
-echo "✓ containerd service file created" | tee -a "$INSTALL_LOG"
+  echo "✓ containerd service file created" | tee -a "$INSTALL_LOG"
 
-# Start containerd
-systemctl daemon-reload
-systemctl enable containerd
-systemctl restart containerd
+  # Start containerd
+  systemctl daemon-reload
+  systemctl enable containerd
+  systemctl restart containerd
 
-# Wait for containerd to be ready
-echo "Waiting for containerd to start..." | tee -a "$INSTALL_LOG"
-for i in {1..10}; do
-  if systemctl is-active --quiet containerd && [ -S /run/containerd/containerd.sock ]; then
-    echo "✓ containerd is running" | tee -a "$INSTALL_LOG"
-    break
+  # Wait for containerd to be ready
+  echo "Waiting for containerd to start..." | tee -a "$INSTALL_LOG"
+  for i in {1..10}; do
+    if systemctl is-active --quiet containerd && [ -S /run/containerd/containerd.sock ]; then
+        echo "✓ containerd is running" | tee -a "$INSTALL_LOG"
+      break
+    fi
+    sleep 1
+  done
+
+  if ! systemctl is-active --quiet containerd; then
+    echo "Warning: containerd may not be running properly" | tee -a "$INSTALL_LOG"
+    systemctl status containerd --no-pager | tee -a "$INSTALL_LOG"
   fi
-  sleep 1
-done
-
-if ! systemctl is-active --quiet containerd; then
-  echo "Warning: containerd may not be running properly" | tee -a "$INSTALL_LOG"
-  systemctl status containerd --no-pager | tee -a "$INSTALL_LOG"
+else
+  echo "✓ Skipped containerd installation (using system version)" | tee -a "$INSTALL_LOG"
 fi
 
 echo "✓ Prerequisites checked" | tee -a "$INSTALL_LOG"
@@ -197,14 +298,52 @@ else
   exit 1
 fi
 
-# Configure CNI network directory (配置由K8s PodCIDR自动管理)
+# Configure CNI network
 echo "[4.2/6] Configuring CNI network..." | tee -a "$INSTALL_LOG"
 mkdir -p /etc/cni/net.d
 
-echo "  注意: CNI网络配置将由Kubernetes控制平面自动管理" | tee -a "$INSTALL_LOG"
-echo "  Cloud端K3s会为每个edge节点分配独立的PodCIDR(如10.42.X.0/24)" | tee -a "$INSTALL_LOG"
-echo "  EdgeCore将根据分配的PodCIDR自动创建CNI配置" | tee -a "$INSTALL_LOG"
-echo "✓ CNI环境已就绪,等待K8s分配PodCIDR" | tee -a "$INSTALL_LOG"
+# Create bridge CNI configuration
+# Note: subnet will be overridden by Kubernetes PodCIDR allocation
+cat > /etc/cni/net.d/10-kubeedge-bridge.conflist <<EOF
+{
+  "cniVersion": "0.4.0",
+  "name": "kubeedge-br0",
+  "plugins": [
+    {
+      "type": "bridge",
+      "bridge": "kubeedge0",
+      "isDefaultGateway": true,
+      "forceAddress": false,
+      "ipMasq": true,
+      "hairpinMode": true,
+      "ipam": {
+        "type": "host-local",
+        "ranges": [
+          [{"subnet": "10.42.0.0/16"}]
+        ],
+        "routes": [
+          {"dst": "0.0.0.0/0"}
+        ]
+      }
+    },
+    {
+      "type": "portmap",
+      "capabilities": {
+        "portMappings": true
+      }
+    },
+    {
+      "type": "bandwidth",
+      "capabilities": {
+        "bandwidth": true
+      }
+    }
+  ]
+}
+EOF
+
+echo "  ✓ CNI配置已创建 (Kubernetes将通过PodCIDR管理IP分配)" | tee -a "$INSTALL_LOG"
+echo "✓ CNI网络配置完成" | tee -a "$INSTALL_LOG"
 
 
 # Deploy Mosquitto MQTT Broker for IoT devices
@@ -427,6 +566,10 @@ modules:
         - 10.43.0.10
       clusterDomain: cluster.local
       containerRuntimeEndpoint: unix:///run/containerd/containerd.sock
+      networkPluginName: cni
+      networkPluginMTU: 1500
+      cniConfDir: /etc/cni/net.d
+      cniBinDir: /opt/cni/bin
       contentType: application/json
       enableDebuggingHandlers: true
       evictionHard:

@@ -50,6 +50,36 @@ echo "对外 IP: $EXTERNAL_IP" | tee -a "$INSTALL_LOG"
 echo "节点名称: $NODE_NAME" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 
+# Check for existing components
+echo "[0/7] Checking for existing components..." | tee -a "$INSTALL_LOG"
+
+HAS_K3S=false
+HAS_DOCKER=false
+
+if [ -f /usr/local/bin/k3s ] || systemctl list-units --full -all 2>/dev/null | grep -q "k3s.service"; then
+  HAS_K3S=true
+  echo "⚠️  警告: 检测到系统已安装 K3s" | tee -a "$INSTALL_LOG"
+  echo "   现有 K3s 安装位置: /usr/local/bin/k3s" | tee -a "$INSTALL_LOG"
+  echo "   如需重新安装，请先运行清理脚本: sudo ./cleanup.sh" | tee -a "$INSTALL_LOG"
+  echo "" | tee -a "$INSTALL_LOG"
+  read -p "是否继续？这将覆盖现有安装 (y/N): " -n 1 -r
+  echo ""
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "❌ 用户取消安装" | tee -a "$INSTALL_LOG"
+    exit 1
+  fi
+fi
+
+if systemctl list-units --full -all 2>/dev/null | grep -q "docker.service" || command -v docker &> /dev/null; then
+  HAS_DOCKER=true
+  echo "⚠️  警告: 检测到系统已安装 Docker" | tee -a "$INSTALL_LOG"
+  echo "   Docker 与 K3s 可以共存，但它们使用不同的 containerd" | tee -a "$INSTALL_LOG"
+  echo "   K3s 有自己内置的 containerd，不会影响 Docker" | tee -a "$INSTALL_LOG"
+  echo "" | tee -a "$INSTALL_LOG"
+fi
+
+echo "✓ Component check completed" | tee -a "$INSTALL_LOG"
+
 # Find k3s and keadm binaries
 echo "[1/7] Locating binaries..." | tee -a "$INSTALL_LOG"
 K3S_BIN=$(find "$SCRIPT_DIR" -name "k3s-${ARCH}" -type f 2>/dev/null | head -1)
