@@ -217,9 +217,6 @@ version = 2
           runtime_type = "io.containerd.runc.v2"
           [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
             SystemdCgroup = true
-    [plugins."io.containerd.grpc.v1.cri".cni]
-      bin_dir = "/opt/cni/bin"
-      conf_dir = "/etc/cni/net.d"
 CONTAINERD_EOF
 
   # Create containerd systemd service (使用检测到的路径)
@@ -432,8 +429,8 @@ chmod +x /usr/local/bin/edgecore
 mkdir -p /etc/kubeedge
 mkdir -p /var/lib/kubeedge
 mkdir -p /var/log/kubeedge
-mkdir -p /etc/kubeedge/ca
-mkdir -p /etc/kubeedge/certs
+# Note: DO NOT pre-create ca/ and certs/ directories
+# EdgeCore will automatically create them and request certificates from CloudCore on first startup
 
 # 创建 EdgeCore systemd service
 cat > /etc/systemd/system/edgecore.service << 'EDGECORE_SVC_EOF'
