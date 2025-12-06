@@ -355,20 +355,20 @@ jobs:
 
       - name: 生成校验和并准备发布文件
         run: |
-          BUILD_DIR="build-${{ matrix.arch }}"
-          cd "$BUILD_DIR/cloud"
+          # 使用环境变量中的BUILD_DIR（绝对路径）
+          cd "${BUILD_DIR}/cloud"
           sha256sum *.tar.gz > checksums-cloud-${{ matrix.arch }}.txt
-          cd ../edge
+          cd "${BUILD_DIR}/edge"
           sha256sum *.tar.gz > checksums-edge-${{ matrix.arch }}.txt
           
           # 合并校验和文件
           mkdir -p "${GITHUB_WORKSPACE}/release_files"
-          cat "$BUILD_DIR/cloud/checksums-cloud-${{ matrix.arch }}.txt" >> "${GITHUB_WORKSPACE}/release_files/checksums.txt"
-          cat "$BUILD_DIR/edge/checksums-edge-${{ matrix.arch }}.txt" >> "${GITHUB_WORKSPACE}/release_files/checksums.txt"
+          cat "${BUILD_DIR}/cloud/checksums-cloud-${{ matrix.arch }}.txt" >> "${GITHUB_WORKSPACE}/release_files/checksums.txt"
+          cat "${BUILD_DIR}/edge/checksums-edge-${{ matrix.arch }}.txt" >> "${GITHUB_WORKSPACE}/release_files/checksums.txt"
           
           # 复制所有tar.gz文件到release目录
-          cp "$BUILD_DIR/cloud/"*.tar.gz "${GITHUB_WORKSPACE}/release_files/"
-          cp "$BUILD_DIR/edge/"*.tar.gz "${GITHUB_WORKSPACE}/release_files/"
+          cp "${BUILD_DIR}/cloud/"*.tar.gz "${GITHUB_WORKSPACE}/release_files/"
+          cp "${BUILD_DIR}/edge/"*.tar.gz "${GITHUB_WORKSPACE}/release_files/"
 
   release:
     needs: build
