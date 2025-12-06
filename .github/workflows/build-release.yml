@@ -1,4 +1,4 @@
-name: Build and Release KubeEdge Offline Package
+name: 构建和发布 KubeEdge 离线包
 
 on:
   push:
@@ -12,47 +12,108 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    name: Build offline package
+    name: 构建离线包
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Set up environment
+      - name: 设置编译环境
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget tar gzip
+          sudo apt-get install -y wget tar gzip curl
           echo "TAG_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
 
-      - name: Prepare offline package
+      - name: 构建云端离线包
         run: |
           mkdir -p build_output
-          bash online_prepare.sh build_output
-          ls -lh build_output/
+          echo "正在构建云端 ${{ matrix.arch }} 离线包..."
+          bash cloud/build/build.sh ${{ matrix.arch }}
+          if [ -f "cloud/release/"*.tar.gz ]; then
+            cp cloud/release/*.tar.gz build_output/
+            ls -lh build_output/
+          else
+            echo "云端包构建失败!"
+            exit 1
+          fi
 
-      - name: Create release package
+      - name: 构建边缘端离线包
+        run: |
+          echo "正在构建边缘端 ${{ matrix.arch }} 离线包..."
+          bash edge/build/build.sh ${{ matrix.arch }}
+          if [ -f "edge/release/"*.tar.gz ]; then
+            cp edge/release/*.tar.gz build_output/
+            ls -lh build_output/
+          else
+            echo "边缘端包构建失败!"
+            exit 1
+          fi
+
+      - name: 重命名包文件
         run: |
           cd build_output
-          # Rename the package with version tag
-          for file in kubeedge-edge-offline-*.tar.gz; do
+          # 重命名云端包
+          for file in kubeedge-cloud-*-k3s-*.tar.gz; do
             if [ -f "$file" ]; then
-              mv "$file" "kubeedge-edge-offline-${TAG_VERSION}.tar.gz"
-              break
+              mv "$file" "kubeedge-cloud-${TAG_VERSION}-${{ matrix.arch }}.tar.gz"
+            fi
+          done
+          # 重命名边缘端包
+          for file in kubeedge-edge-*.tar.gz; do
+            if [ -f "$file" ]; then
+              mv "$file" "kubeedge-edge-${TAG_VERSION}-${{ matrix.arch }}.tar.gz"
             fi
           done
           ls -lh
 
-      - name: Generate checksum
+      - name: 生成校验和
         run: |
           cd build_output
-          sha256sum kubeedge-edge-offline-*.tar.gz > checksums.txt
-          cat checksums.txt
+          sha256sum * > checksums-${{ matrix.arch }}.txt
+          cat checksums-${{ matrix.arch }}.txt
 
-      - name: Create Release and upload assets
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v3
+        with:
+          name: packages-${{ matrix.arch }}
+          path: build_output/*
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    name: 发布到 GitHub Release
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v3
+        with:
+          path: release_files
+
+      - name: 合并所有文件
+        run: |
+          mkdir -p final_release
+          find release_files -type f -name "*.tar.gz" -o -name "checksums-*.txt" | xargs cp -t final_release/
+          # 合并所有校验和文件
+          touch final_release/checksums.txt
+          for file in final_release/checksums-*.txt; do
+            cat "$file" >> final_release/checksums.txt
+            rm "$file"
+          done
+          ls -lh final_release/
+
+      - name: 创建 Release 并上传资产
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            build_output/kubeedge-edge-offline-*.tar.gz
-            build_output/checksums.txt
+            final_release/kubeedge-cloud-*.tar.gz
+            final_release/kubeedge-edge-*.tar.gz
+            final_release/checksums.txt
           generate_release_notes: true
           prerelease: false
         env:
