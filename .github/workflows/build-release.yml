@@ -5,11 +5,7 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      version:
-        description: '版本号（用于手动触发）'
-        required: false
-        type: string
+    # 手动触发时默认使用提交短 hash 作为发布标识
 
 permissions:
   contents: write
@@ -46,11 +42,7 @@ jobs:
         id: set_env
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ -z "${{ github.event.inputs.version }}" ]; then
-              echo "error: 手动触发需要提供 version (例如 v1.0.0)" >&2
-              exit 1
-            fi
-            TAG_VERSION="${{ github.event.inputs.version }}"
+            TAG_VERSION="manual-${GITHUB_SHA::7}"
           else
             TAG_VERSION=${GITHUB_REF#refs/tags/}
             if [ -z "$TAG_VERSION" ]; then
