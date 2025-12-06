@@ -182,24 +182,69 @@ jobs:
           # 6. 打包离线安装包
           echo "[6/6] 创建离线安装包..."
           # install.sh 在 GITHUB_WORKSPACE/cloud/install/ 目录
-          INSTALL_SCRIPT="${GITHUB_WORKSPACE}/cloud/install/install.sh"
+          INSTALL_DIR="${GITHUB_WORKSPACE}/cloud/install"
+          INSTALL_SCRIPT="$INSTALL_DIR/install.sh"
+          INSTALL_KUBEEDGE_ONLY="$INSTALL_DIR/install-kubeedge-only.sh"
+          
           if [ ! -f "$INSTALL_SCRIPT" ]; then
             echo "错误：找不到安装脚本 $INSTALL_SCRIPT"
-            ls -la "${GITHUB_WORKSPACE}/cloud/install/" || echo "install 目录不存在"
+            ls -la "$INSTALL_DIR" || echo "install 目录不存在"
             exit 1
           fi
           
           PACKAGE_NAME="kubeedge-cloud-${KUBEEDGE_VERSION}-k3s-${K3S_VERSION}-${{ matrix.arch }}.tar.gz"
-          tar -czf "$PACKAGE_NAME" \
-            k3s-${{ matrix.arch }} \
-            cloudcore \
-            keadm \
-            config \
-            images \
-            -C "$(dirname "$INSTALL_SCRIPT")" install.sh
+          
+          # 创建临时目录用于组织文件结构
+          TEMP_PKG_DIR="$(mktemp -d)"
+          trap "rm -rf $TEMP_PKG_DIR" EXIT
+          
+          # 复制所有文件到临时目录
+          cp k3s-${{ matrix.arch }} "$TEMP_PKG_DIR/"
+          cp cloudcore "$TEMP_PKG_DIR/"
+          cp keadm "$TEMP_PKG_DIR/"
+          cp -r config "$TEMP_PKG_DIR/"
+          cp -r images "$TEMP_PKG_DIR/"
+          
+          # 复制安装脚本（两个）
+          cp "$INSTALL_SCRIPT" "$TEMP_PKG_DIR/"
+          if [ -f "$INSTALL_KUBEEDGE_ONLY" ]; then
+            cp "$INSTALL_KUBEEDGE_ONLY" "$TEMP_PKG_DIR/"
+            echo "✓ 已包含 install-kubeedge-only.sh 脚本（用于已有 K3s/K8s 的场景）"
+          fi
+          
+          # 创建 README
+          cat > "$TEMP_PKG_DIR/README.txt" << EOFREADME
+          KubeEdge 云端离线安装包
+          
+          包含两个安装脚本：
+          
+          1. install.sh
+             完整安装脚本，会安装 K3s + KubeEdge CloudCore
+             适用场景：全新环境，需要完整的 Kubernetes 集群
+             使用方法：sudo ./install.sh
+          
+          2. install-kubeedge-only.sh
+             智能安装脚本，仅安装 KubeEdge CloudCore 组件
+             适用场景：已有 K3s 或 K8s 集群，只需添加 KubeEdge 功能
+             使用方法：sudo ./install-kubeedge-only.sh
+             
+             支持选项：
+             --advertise-address <IP>   指定对外 IP
+             --skip-images              跳过镜像加载
+             --dry-run                  预览安装步骤
+             --help                     查看帮助
+          
+          详细文档：https://github.com/kubeedge/kubeedge
+          EOFREADME
+          
+          # 打包
+          tar -czf "$PACKAGE_NAME" -C "$TEMP_PKG_DIR" .
           
           echo "✓ 包已创建: $PACKAGE_NAME"
           echo "包大小: $(du -h "$PACKAGE_NAME" | cut -f1)"
+          echo ""
+          echo "包内容："
+          tar -tzf "$PACKAGE_NAME" | head -20
 
       - name: 生成校验和并准备发布文件
         run: |
