@@ -496,28 +496,52 @@ if [ -d "$HELM_CHART_DIR" ] && [ -f "$HELM_CHART_DIR/edgemesh.tgz" ]; then
     MASTER_NODE=$($KUBECTL get nodes -o jsonpath='{.items[0].metadata.name}')
     echo "使用 Relay Node: $MASTER_NODE" | tee -a "$INSTALL_LOG"
     
-    # Install EdgeMesh using local helm chart
-    /usr/local/bin/helm install edgemesh "$HELM_CHART_DIR/edgemesh.tgz" \
-      --namespace kubeedge \
-      --set agent.image=kubeedge/edgemesh-agent:v1.17.0 \
-      --set agent.psk="$EDGEMESH_PSK" \
-      --set agent.relayNodes[0].nodeName="$MASTER_NODE" \
-      --set agent.relayNodes[0].advertiseAddress="{$CLOUD_IP}" 2>&1 | tee -a "$INSTALL_LOG"
-    
-    if [ $? -eq 0 ]; then
-      echo "✓ EdgeMesh 安装成功" | tee -a "$INSTALL_LOG"
-      
-      # Wait for EdgeMesh pods
-      echo "等待 EdgeMesh Agent Pod 启动..." | tee -a "$INSTALL_LOG"
-      $KUBECTL wait --for=condition=ready pod -l app=edgemesh-agent \
-        -n kubeedge --timeout=300s 2>&1 | tee -a "$INSTALL_LOG"
+    # Check if helm is available
+    HELM_CMD=""
+    if command -v helm &> /dev/null; then
+      HELM_CMD="helm"
+    elif [ -f "$SCRIPT_DIR/helm" ]; then
+      HELM_CMD="$SCRIPT_DIR/helm"
+    else
+      echo "警告: 未找到 helm 命令，尝试使用 kubectl 手动部署 EdgeMesh" | tee -a "$INSTALL_LOG"
+      echo "EdgeMesh 需要 helm 进行部署，请手动安装:" | tee -a "$INSTALL_LOG"
+      echo "  1. 下载 helm: wget https://get.helm.sh/helm-v3.13.0-linux-$ARCH.tar.gz" | tee -a "$INSTALL_LOG"
+      echo "  2. 解压并安装: tar -xzf helm-v3.13.0-linux-$ARCH.tar.gz && sudo mv linux-$ARCH/helm /usr/local/bin/" | tee -a "$INSTALL_LOG"
+      echo "  3. 安装 EdgeMesh: helm install edgemesh $HELM_CHART_DIR/edgemesh.tgz --namespace kubeedge \\" | tee -a "$INSTALL_LOG"
+      echo "       --set agent.image=kubeedge/edgemesh-agent:v1.17.0 \\" | tee -a "$INSTALL_LOG"
+      echo "       --set agent.psk=\"$EDGEMESH_PSK\" \\" | tee -a "$INSTALL_LOG"
+      echo "       --set agent.relayNodes[0].nodeName=\"$MASTER_NODE\" \\" | tee -a "$INSTALL_LOG"
+      echo "       --set agent.relayNodes[0].advertiseAddress=\"{$CLOUD_IP}\"" | tee -a "$INSTALL_LOG"
       
       # Save PSK to file for edge nodes
       echo "$EDGEMESH_PSK" > "$SCRIPT_DIR/edgemesh-psk.txt"
       echo "EdgeMesh PSK 已保存到: $SCRIPT_DIR/edgemesh-psk.txt" | tee -a "$INSTALL_LOG"
-    else
-      echo "✗ EdgeMesh 安装失败，请检查日志" | tee -a "$INSTALL_LOG"
-      echo "可以稍后手动安装: helm install edgemesh $HELM_CHART_DIR/edgemesh.tgz ..." | tee -a "$INSTALL_LOG"
+      HELM_CMD=""
+    fi
+    
+    if [ -n "$HELM_CMD" ]; then
+      # Install EdgeMesh using helm
+      $HELM_CMD install edgemesh "$HELM_CHART_DIR/edgemesh.tgz" \
+        --namespace kubeedge \
+        --set agent.image=kubeedge/edgemesh-agent:v1.17.0 \
+        --set agent.psk="$EDGEMESH_PSK" \
+        --set agent.relayNodes[0].nodeName="$MASTER_NODE" \
+        --set agent.relayNodes[0].advertiseAddress="{$CLOUD_IP}" 2>&1 | tee -a "$INSTALL_LOG"
+      
+      if [ $? -eq 0 ]; then
+        echo "✓ EdgeMesh 安装成功" | tee -a "$INSTALL_LOG"
+        
+        # Wait for EdgeMesh pods
+        echo "等待 EdgeMesh Agent Pod 启动..." | tee -a "$INSTALL_LOG"
+        $KUBECTL wait --for=condition=ready pod -l app=edgemesh-agent \
+          -n kubeedge --timeout=300s 2>&1 | tee -a "$INSTALL_LOG"
+        
+        # Save PSK to file for edge nodes
+        echo "$EDGEMESH_PSK" > "$SCRIPT_DIR/edgemesh-psk.txt"
+        echo "EdgeMesh PSK 已保存到: $SCRIPT_DIR/edgemesh-psk.txt" | tee -a "$INSTALL_LOG"
+      else
+        echo "✗ EdgeMesh 安装失败，请检查日志" | tee -a "$INSTALL_LOG"
+      fi
     fi
   else
     echo "跳过 EdgeMesh 安装" | tee -a "$INSTALL_LOG"

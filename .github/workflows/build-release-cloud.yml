@@ -142,6 +142,21 @@ jobs:
           done
           echo "✓ 镜像处理完成"
           
+          # 4.5. 下载 Helm 二进制文件
+          echo "[4.4/6] 下载 Helm 二进制文件..."
+          HELM_VERSION="v3.19.2"
+          HELM_TAR="helm-${HELM_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          HELM_URL="https://get.helm.sh/${HELM_TAR}"
+          if wget -q -O helm.tar.gz "$HELM_URL"; then
+            tar -xzf helm.tar.gz
+            mv linux-${{ matrix.arch }}/helm ./helm
+            chmod +x ./helm
+            rm -rf linux-${{ matrix.arch }} helm.tar.gz
+            echo "✓ Helm 二进制文件下载完成 (${HELM_VERSION})"
+          else
+            echo "警告：无法下载 Helm，EdgeMesh 安装将需要手动操作"
+          fi
+          
           # 5. 下载 EdgeMesh Helm Chart
           echo "[4.5/6] 下载 EdgeMesh Helm Chart..."
           mkdir -p helm-charts
@@ -193,6 +208,12 @@ jobs:
           cp cloudcore "$TEMP_PKG_DIR/"
           cp keadm "$TEMP_PKG_DIR/"
           cp -r images "$TEMP_PKG_DIR/"
+          
+          # 复制 Helm 二进制文件 (如果存在)
+          if [ -f helm ]; then
+            cp helm "$TEMP_PKG_DIR/"
+            echo "✓ 已包含 Helm 二进制文件"
+          fi
           
           # 复制 EdgeMesh Helm charts (如果存在)
           if [ -d helm-charts ] && [ -n "$(ls -A helm-charts 2>/dev/null)" ]; then
