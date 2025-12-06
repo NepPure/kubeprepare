@@ -1,0 +1,284 @@
+name: 构建和发布 KubeEdge 边缘端离线包
+
+on:
+  push:
+    tags:
+      - 'v*'
+    paths:
+      - 'edge/**'
+      - '.github/workflows/build-release-edge.yml'
+  workflow_dispatch:
+    # 手动触发时默认使用提交短 hash 作为发布标识
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-edge:
+    runs-on: ubuntu-latest
+    name: 构建并发布边缘端离线包 (${{ matrix.arch }})
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            dockerfile_platform: linux/amd64
+          - arch: arm64
+            dockerfile_platform: linux/arm64
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置QEMU支持
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.dockerfile_platform }}
+
+      - name: 设置Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 设置环境变量
+        id: set_env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_VERSION="manual-edge-${GITHUB_SHA::7}"
+          else
+            TAG_VERSION=${GITHUB_REF#refs/tags/}
+            if [ -z "$TAG_VERSION" ]; then
+              echo "error: 未能解析到 tag，请使用 tag 触发或在手动触发时提供 version" >&2
+              exit 1
+            fi
+          fi
+          echo "TAG_VERSION=${TAG_VERSION}" >> $GITHUB_ENV
+          echo "tag_version=${TAG_VERSION}" >> $GITHUB_OUTPUT
+          echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "BUILD_DIR=$(pwd)/build-${{ matrix.arch }}" >> $GITHUB_ENV
+
+      - name: 构建边缘端离线包
+        run: |
+          BUILD_DIR="build-${{ matrix.arch }}"
+          mkdir -p "$BUILD_DIR/edge"
+          cd "$BUILD_DIR/edge"
+          
+          echo "=== 构建边缘端离线包 (架构: ${{ matrix.arch }}) ==="
+          
+          # 定义版本
+          KUBEEDGE_VERSION="1.22.0"
+          CONTAINERD_VERSION="1.7.29"
+          RUNC_VERSION="1.4.0"
+          CNI_VERSION="1.8.0"
+          
+          # 1. 下载 KubeEdge 边缘端包
+          echo "[1/6] 下载 KubeEdge 边缘端包..."
+          KUBEEDGE_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/kubeedge-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          wget -q -O kubeedge.tar.gz "$KUBEEDGE_URL" || (echo "错误：无法下载 KubeEdge 边缘端包" && exit 1)
+          tar -xzf kubeedge.tar.gz
+          cp kubeedge-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}/edge/edgecore ./edgecore
+          chmod +x ./edgecore
+          rm -rf kubeedge.tar.gz kubeedge-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}
+          echo "✓ KubeEdge 边缘端包下载完成"
+          
+          # 2. 下载 KubeEdge keadm
+          echo "[2/6] 下载 KubeEdge keadm..."
+          KEADM_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/keadm-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          wget -q -O keadm.tar.gz "$KEADM_URL" || (echo "错误：无法下载 KubeEdge keadm" && exit 1)
+          tar -xzf keadm.tar.gz
+          cp keadm-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}/keadm/keadm ./
+          chmod +x ./keadm
+          rm keadm.tar.gz
+          echo "✓ KubeEdge keadm 下载完成"
+          
+          # 3. 下载 containerd 和 runc
+          echo "[3/6] 下载 containerd 和 runc..."
+          CONTAINERD_URL="https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          if ! wget -q -O containerd.tar.gz "$CONTAINERD_URL"; then
+            echo "警告：无法下载 containerd v${CONTAINERD_VERSION}，尝试备用版本"
+            CONTAINERD_URL="https://github.com/containerd/containerd/releases/download/v1.6.0/containerd-1.6.0-linux-${{ matrix.arch }}.tar.gz"
+            wget -q -O containerd.tar.gz "$CONTAINERD_URL" || echo "警告：containerd 下载失败"
+          fi
+          
+          if [ -f "containerd.tar.gz" ]; then
+            tar -xzf containerd.tar.gz
+            rm containerd.tar.gz
+            echo "✓ containerd 下载完成"
+          fi
+          
+          # 下载 runc
+          RUNC_URL="https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/runc.${{ matrix.arch }}"
+          if wget -q -O runc "$RUNC_URL"; then
+            chmod +x runc
+            echo "✓ runc 下载完成"
+          else
+            echo "警告：无法下载 runc"
+          fi
+          
+          # 4. 下载 CNI 插件
+          echo "[4/6] 下载 CNI 插件..."
+          CNI_URL="https://github.com/containernetworking/plugins/releases/download/v${CNI_VERSION}/cni-plugins-linux-${{ matrix.arch }}-v${CNI_VERSION}.tgz"
+          if wget -q -O cni-plugins.tgz "$CNI_URL"; then
+            mkdir -p cni-plugins
+            tar -xzf cni-plugins.tgz -C cni-plugins
+            rm cni-plugins.tgz
+            echo "✓ CNI 插件下载完成"
+          else
+            echo "警告：无法下载 CNI 插件"
+          fi
+          
+          # 4.5. 下载 Mosquitto MQTT 镜像 (用于物联网设备管理)
+          echo "[4.5/6] 下载 Mosquitto MQTT 镜像..."
+          mkdir -p images
+          MQTT_IMAGE="eclipse-mosquitto:2.0"
+          
+          echo "  拉取 MQTT 镜像: $MQTT_IMAGE"
+          if docker pull --platform ${{ matrix.dockerfile_platform }} "$MQTT_IMAGE"; then
+            # 保存镜像为 tar 文件
+            docker save "$MQTT_IMAGE" -o "images/eclipse-mosquitto-2.0.tar"
+            echo "✓ Mosquitto MQTT 镜像已保存 (用于边缘节点的物联网设备连接)"
+            ls -lh images/eclipse-mosquitto-2.0.tar
+          else
+            echo "警告：Mosquitto 镜像下载失败，将影响设备管理功能"
+          fi
+          
+          # 5. 创建配置模板
+          echo "[5/6] 创建配置模板..."
+          mkdir -p config/kubeedge
+          cat > config/kubeedge/edgecore-config.yaml << 'EOFCONFIG'
+          apiVersion: edgecore.config.kubeedge.io/v1alpha2
+          kind: EdgeCore
+          database:
+            dataSource: /var/lib/kubeedge/edgecore.db
+          modules:
+            edgeHub:
+              enable: true
+              heartbeat: 15
+            edgeStream:
+              enable: true
+              handshakeTimeout: 5
+              readDeadline: 15
+              server: 127.0.0.1:10003
+              tlsCAFile: /etc/kubeedge/ca/rootCA.crt
+              tlsCertFile: /etc/kubeedge/certs/edge.crt
+              tlsPrivateKeyFile: /etc/kubeedge/certs/edge.key
+              tlsEnable: true
+            eventBus:
+              enable: true
+              mqttMode: 2
+              mqttServerExternal: tcp://127.0.0.1:1883
+              mqttServerInternal: tcp://127.0.0.1:1884
+              mqttQOS: 0
+              mqttRetain: false
+              mqttSessionQueueSize: 100
+            metaManager:
+              enable: true
+            deviceTwin:
+              enable: true
+            dbTest:
+              enable: false
+            funcManager:
+              enable: false
+            imagePrependHostname: true
+            surfaceManager:
+              enable: false
+          EOFCONFIG
+          echo "✓ 配置模板已创建 (EventBus 配置连接到 localhost:1883 MQTT)"
+          
+          # 5-b. 创建 systemd service 模板（避免 keadm 下载）
+          echo "[5/6-b] 创建 systemd service 模板..."
+          mkdir -p systemd
+          
+          # 复制 mosquitto.service 模板
+          MOSQUITTO_SVC="${GITHUB_WORKSPACE}/edge/systemd/mosquitto.service"
+          if [ -f "$MOSQUITTO_SVC" ]; then
+            cp "$MOSQUITTO_SVC" systemd/
+            echo "✓ mosquitto.service 模板已包含"
+          fi
+          
+          cat > systemd/edgecore.service << 'EOFSVC'
+          [Unit]
+          Description=KubeEdge EdgeCore
+          Documentation=https://kubeedge.io
+          After=network-online.target mosquitto.service
+          Wants=network-online.target
+          
+          [Service]
+          Type=simple
+          ExecStart=/usr/local/bin/edgecore --config=/etc/kubeedge/edgecore.yaml
+          Restart=always
+          RestartSec=5
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=edgecore
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOFSVC
+          echo "✓ systemd service 模板已创建"
+          
+          # 5-c. 创建安装准备文件（keadm 兼容）
+          echo "[5/6-c] 创建安装元数据..."
+          mkdir -p meta
+          cat > meta/version.txt << EOFMETA
+          kubeedge_version=${KUBEEDGE_VERSION}
+          arch=${{ matrix.arch }}
+          build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOFMETA
+          echo "✓ 安装元数据已创建"
+          
+          # 6. 打包离线安装包
+          echo "[6/6] 创建离线安装包..."
+          # install.sh 在 GITHUB_WORKSPACE/edge/install/ 目录
+          INSTALL_SCRIPT="${GITHUB_WORKSPACE}/edge/install/install.sh"
+          if [ ! -f "$INSTALL_SCRIPT" ]; then
+            echo "错误：找不到安装脚本 $INSTALL_SCRIPT"
+            ls -la "${GITHUB_WORKSPACE}/edge/install/" || echo "install 目录不存在"
+            exit 1
+          fi
+          
+          PACKAGE_NAME="kubeedge-edge-${KUBEEDGE_VERSION}-${{ matrix.arch }}.tar.gz"
+          tar -czf "$PACKAGE_NAME" \
+            edgecore \
+            keadm \
+            bin \
+            runc \
+            cni-plugins \
+            images \
+            config \
+            systemd \
+            meta \
+            -C "$(dirname "$INSTALL_SCRIPT")" install.sh
+          
+          echo "✓ 包已创建: $PACKAGE_NAME"
+          echo "包大小: $(du -h "$PACKAGE_NAME" | cut -f1)"
+          
+          # 显示包内容摘要
+          echo ""
+          echo "包内容摘要:"
+          tar -tzf "$PACKAGE_NAME" | head -20
+          echo "..."
+          echo "总文件数: $(tar -tzf "$PACKAGE_NAME" | wc -l)"
+
+      - name: 生成校验和并准备发布文件
+        run: |
+          # 为边缘端包生成校验和
+          cd "${BUILD_DIR}/edge"
+          sha256sum *.tar.gz > checksums-edge-${{ matrix.arch }}.txt
+          
+          # 创建发布目录并收集所有文件
+          mkdir -p "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}"
+          cp *.tar.gz "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/"
+          cp checksums-edge-${{ matrix.arch }}.txt "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/checksums-${{ matrix.arch }}.txt"
+          
+          echo "=== 准备发布的文件 (${{ matrix.arch }}) ==="
+          ls -lh "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/"
+
+      - name: 上传到 GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.set_env.outputs.tag_version }}
+          files: release-${{ matrix.arch }}/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

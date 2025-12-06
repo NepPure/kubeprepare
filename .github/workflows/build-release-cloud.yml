@@ -1,0 +1,226 @@
+name: 构建和发布 KubeEdge 云端离线包
+
+on:
+  push:
+    tags:
+      - 'v*'
+    paths:
+      - 'cloud/**'
+      - '.github/workflows/build-release-cloud.yml'
+  workflow_dispatch:
+    # 手动触发时默认使用提交短 hash 作为发布标识
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-cloud:
+    runs-on: ubuntu-latest
+    name: 构建并发布云端离线包 (${{ matrix.arch }})
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            dockerfile_platform: linux/amd64
+          - arch: arm64
+            dockerfile_platform: linux/arm64
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置QEMU支持
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.dockerfile_platform }}
+
+      - name: 设置Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 设置环境变量
+        id: set_env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_VERSION="manual-cloud-${GITHUB_SHA::7}"
+          else
+            TAG_VERSION=${GITHUB_REF#refs/tags/}
+            if [ -z "$TAG_VERSION" ]; then
+              echo "error: 未能解析到 tag，请使用 tag 触发或在手动触发时提供 version" >&2
+              exit 1
+            fi
+          fi
+          echo "TAG_VERSION=${TAG_VERSION}" >> $GITHUB_ENV
+          echo "tag_version=${TAG_VERSION}" >> $GITHUB_OUTPUT
+          echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "BUILD_DIR=$(pwd)/build-${{ matrix.arch }}" >> $GITHUB_ENV
+
+      - name: 构建云端离线包
+        run: |
+          BUILD_DIR="build-${{ matrix.arch }}"
+          mkdir -p "$BUILD_DIR/cloud"
+          cd "$BUILD_DIR/cloud"
+          
+          echo "=== 构建云端离线包 (架构: ${{ matrix.arch }}) ==="
+          
+          # 定义版本
+          K3S_VERSION="v1.34.2+k3s1"
+          KUBEEDGE_VERSION="1.22.0"
+          
+          # 1. 下载 k3s 二进制文件
+          echo "[1/6] 下载 k3s 二进制文件..."
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            K3S_URL="https://github.com/k3s-io/k3s/releases/download/${K3S_VERSION}/k3s"
+          else
+            K3S_URL="https://github.com/k3s-io/k3s/releases/download/${K3S_VERSION}/k3s-arm64"
+          fi
+          wget -q -O k3s-${{ matrix.arch }} "$K3S_URL" || (echo "错误：无法下载 k3s" && exit 1)
+          chmod +x k3s-${{ matrix.arch }}
+          echo "✓ k3s 下载完成"
+          
+          # 2. 下载 KubeEdge 云端包
+          echo "[2/6] 下载 KubeEdge 云端包..."
+          KUBEEDGE_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/kubeedge-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          wget -q -O kubeedge.tar.gz "$KUBEEDGE_URL" || (echo "错误：无法下载 KubeEdge 云端包" && exit 1)
+          tar -xzf kubeedge.tar.gz
+          cp kubeedge-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}/cloud/cloudcore/cloudcore ./
+          chmod +x ./cloudcore
+          rm kubeedge.tar.gz
+          echo "✓ KubeEdge 云端包下载完成"
+          
+          # 3. 下载 KubeEdge keadm
+          echo "[3/6] 下载 KubeEdge keadm..."
+          KEADM_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/keadm-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          wget -q -O keadm.tar.gz "$KEADM_URL" || (echo "错误：无法下载 KubeEdge keadm" && exit 1)
+          tar -xzf keadm.tar.gz
+          cp keadm-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}/keadm/keadm ./
+          chmod +x ./keadm
+          rm keadm.tar.gz
+          echo "✓ KubeEdge keadm 下载完成"
+          
+          # 4. 下载 k3s 和 KubeEdge 容器镜像
+          echo "[4/6] 下载容器镜像..."
+          mkdir -p images
+          
+          # K3s v1.34.2+k3s1 官方镜像列表
+          K3S_IMAGES=(
+            "docker.io/rancher/klipper-helm:v0.9.10-build20251111"
+            "docker.io/rancher/klipper-lb:v0.4.13"
+            "docker.io/rancher/local-path-provisioner:v0.0.32"
+            "docker.io/rancher/mirrored-coredns-coredns:1.13.1"
+            "docker.io/rancher/mirrored-library-busybox:1.36.1"
+            "docker.io/rancher/mirrored-library-traefik:3.5.1"
+            "docker.io/rancher/mirrored-metrics-server:v0.8.0"
+            "docker.io/rancher/mirrored-pause:3.6"
+          )
+          
+          # KubeEdge v1.22.0 组件镜像列表 (从 GitHub keadm 代码获取)
+          KUBEEDGE_IMAGES=(
+            "docker.io/kubeedge/cloudcore:v${KUBEEDGE_VERSION}"
+            "docker.io/kubeedge/iptables-manager:v${KUBEEDGE_VERSION}"
+            "docker.io/kubeedge/controller-manager:v${KUBEEDGE_VERSION}"
+            "docker.io/kubeedge/admission:v${KUBEEDGE_VERSION}"
+          )
+          
+          # 合并所有镜像
+          ALL_IMAGES=("${K3S_IMAGES[@]}" "${KUBEEDGE_IMAGES[@]}")
+          
+          for image in "${ALL_IMAGES[@]}"; do
+            echo "  拉取镜像: $image"
+            docker pull --platform ${{ matrix.dockerfile_platform }} "$image" || echo "警告：无法拉取 $image"
+            
+            # 保存镜像为tar文件
+            filename=$(echo "$image" | sed 's/[\/:]/-/g')
+            docker save "$image" -o "images/${filename}.tar" 2>/dev/null || echo "警告：无法保存 $image"
+          done
+          echo "✓ 镜像处理完成"
+          
+          # 5. 创建配置模板
+          echo "[5/6] 创建配置模板..."
+          mkdir -p config/kubeedge
+          cat > config/kubeedge/cloudcore-config.yaml << 'EOFCONFIG'
+          apiVersion: cloudcore.config.kubeedge.io/v1alpha2
+          kind: CloudCore
+          kubeAPIConfig:
+            kubeConfig: ""
+            master: ""
+            contentType: application/vnd.kubernetes.protobuf
+            qps: 100
+            burst: 200
+          databases:
+            redis:
+              enable: false
+          cloudHub:
+            tlsCAFile: /etc/kubeedge/ca/rootCA.crt
+            tlsCertFile: /etc/kubeedge/certs/server.crt
+            tlsPrivateKeyFile: /etc/kubeedge/certs/server.key
+            listenAddr: 0.0.0.0
+            port: 10000
+            protocol: websocket
+            nodeLimit: 1000
+          cloudStream:
+            enable: true
+            streamPort: 10003
+            tlsStreamCAFile: /etc/kubeedge/ca/rootCA.crt
+            tlsStreamCertFile: /etc/kubeedge/certs/stream.crt
+            tlsStreamPrivateKeyFile: /etc/kubeedge/certs/stream.key
+            tlsEnable: true
+          authentication:
+            address: 127.0.0.1:10003
+          modules:
+            cloudHub:
+              enable: true
+            edgeController:
+              enable: true
+            deviceController:
+              enable: true
+              nodeStatusUpdateFrequency: 10
+          EOFCONFIG
+          echo "✓ 配置模板已创建"
+          
+          # 6. 打包离线安装包
+          echo "[6/6] 创建离线安装包..."
+          # install.sh 在 GITHUB_WORKSPACE/cloud/install/ 目录
+          INSTALL_SCRIPT="${GITHUB_WORKSPACE}/cloud/install/install.sh"
+          if [ ! -f "$INSTALL_SCRIPT" ]; then
+            echo "错误：找不到安装脚本 $INSTALL_SCRIPT"
+            ls -la "${GITHUB_WORKSPACE}/cloud/install/" || echo "install 目录不存在"
+            exit 1
+          fi
+          
+          PACKAGE_NAME="kubeedge-cloud-${KUBEEDGE_VERSION}-k3s-${K3S_VERSION}-${{ matrix.arch }}.tar.gz"
+          tar -czf "$PACKAGE_NAME" \
+            k3s-${{ matrix.arch }} \
+            cloudcore \
+            keadm \
+            config \
+            images \
+            -C "$(dirname "$INSTALL_SCRIPT")" install.sh
+          
+          echo "✓ 包已创建: $PACKAGE_NAME"
+          echo "包大小: $(du -h "$PACKAGE_NAME" | cut -f1)"
+
+      - name: 生成校验和并准备发布文件
+        run: |
+          # 为云端包生成校验和
+          cd "${BUILD_DIR}/cloud"
+          sha256sum *.tar.gz > checksums-cloud-${{ matrix.arch }}.txt
+          
+          # 创建发布目录并收集所有文件
+          mkdir -p "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}"
+          cp *.tar.gz "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/"
+          cp checksums-cloud-${{ matrix.arch }}.txt "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/checksums-${{ matrix.arch }}.txt"
+          
+          echo "=== 准备发布的文件 (${{ matrix.arch }}) ==="
+          ls -lh "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/"
+
+      - name: 上传到 GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.set_env.outputs.tag_version }}
+          files: release-${{ matrix.arch }}/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
