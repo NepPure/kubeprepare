@@ -68,7 +68,6 @@ jobs:
           KUBEEDGE_VERSION="1.22.0"
           CONTAINERD_VERSION="1.7.29"
           RUNC_VERSION="1.4.0"
-          CNI_VERSION="1.8.0"
           
           # 1. 下载 KubeEdge 边缘端包
           echo "[1/6] 下载 KubeEdge 边缘端包..."
@@ -114,17 +113,9 @@ jobs:
             echo "警告：无法下载 runc"
           fi
           
-          # 4. 下载 CNI 插件
-          echo "[4/6] 下载 CNI 插件..."
-          CNI_URL="https://github.com/containernetworking/plugins/releases/download/v${CNI_VERSION}/cni-plugins-linux-${{ matrix.arch }}-v${CNI_VERSION}.tgz"
-          if wget -q -O cni-plugins.tgz "$CNI_URL"; then
-            mkdir -p cni-plugins
-            tar -xzf cni-plugins.tgz -C cni-plugins
-            rm cni-plugins.tgz
-            echo "✓ CNI 插件下载完成"
-          else
-            echo "警告：无法下载 CNI 插件"
-          fi
+          # 4. CNI 不需要 (边缘节点使用 host 网络)
+          echo "[4/6] 跳过 CNI 插件 (使用 host 网络模式)..."
+          echo "✓ EdgeMesh 将用于边缘服务网格"
           
           # 4.5. 下载 Mosquitto MQTT 镜像 (用于物联网设备管理)
           echo "[4.5/6] 下载 Mosquitto MQTT 镜像..."
@@ -175,7 +166,6 @@ jobs:
             keadm \
             bin \
             runc \
-            cni-plugins \
             images \
             meta \
             -C "$(dirname "$INSTALL_SCRIPT")" install.sh \

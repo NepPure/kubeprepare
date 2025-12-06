@@ -92,10 +92,35 @@ kubeprepare/
 
 ✅ **完整性验证** - 提供验证脚本确保离线包完整性
 
+✅ **EdgeMesh 服务网格** - 边缘节点使用 host 网络 + EdgeMesh 实现服务发现和通信
+  - 无需 CNI 插件配置
+  - 支持边缘到边缘的服务访问
+  - 支持边缘到云端的服务访问
+
+## 网络架构
+
+### 边缘节点网络模式
+
+边缘节点采用 **host 网络模式**，不使用 CNI 插件：
+- ✅ 简化配置，无需为每个边缘节点分配独立的 Pod 网段
+- ✅ 更适合边缘场景的资源限制
+- ✅ 通过 EdgeMesh 实现服务网格能力
+
+### EdgeMesh 服务网格
+
+EdgeMesh 提供边缘服务发现和流量代理：
+- **服务发现**: 通过 EdgeMesh DNS (169.254.96.16)
+- **流量代理**: EdgeMesh Agent 实现服务间通信
+- **高可用**: 支持配置多个中继节点
+- **跨网络**: 支持边缘节点在不同网络环境下的通信
+
+> 📘 详细部署步骤请参考 [EdgeMesh 部署指南](./EDGEMESH_DEPLOYMENT.md)
+
 ## 详细文档
 
 - [云端安装指南](./cloud/install/README.md)
 - [边缘端安装指南](./edge/install/README.md)
+- [EdgeMesh 部署指南](./EDGEMESH_DEPLOYMENT.md) - 边缘服务网格部署
 - [离线镜像修复报告](./OFFLINE_IMAGE_FIX.md) - 完整离线支持的技术细节
 
 ## 验证工具
@@ -123,8 +148,14 @@ sudo bash cleanup.sh
 此脚本将清理：
 - edgecore 和 containerd 服务
 - 相关二进制文件
-- CNI 插件
 - 配置文件和数据目录
+
+### EdgeMesh 未自动启动
+
+EdgeMesh 需要在安装完 EdgeCore 后手动部署：
+1. 边缘节点需要先成功连接到云端
+2. 确保 metaServer 已启用 (安装脚本已自动配置)
+3. 在云端通过 Helm 部署 EdgeMesh (参考 [EdgeMesh 部署指南](./EDGEMESH_DEPLOYMENT.md))
 
 ## 版本信息
 

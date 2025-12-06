@@ -56,7 +56,6 @@ kubeedge-edge-<版本>-<架构>.tar.gz
 │   ├── containerd-shim-runc-v2
 │   └── ctr
 ├── runc                           # runc 二进制文件
-├── cni-plugins/                   # CNI 网络插件
 ├── images/                        # 容器镜像 (离线)
 │   └── eclipse-mosquitto-2.0.tar  # MQTT Broker 镜像 (~10MB)
 ├── config/                        # 配置模板
@@ -123,10 +122,12 @@ sudo ./install.sh 192.168.1.100 eyJhbGc... my-edge-node
 **脚本执行内容**:
 1. 检查系统要求和架构
 2. 安装 containerd 和 runc
-3. 配置 CNI 插件
-4. 安装 KubeEdge EdgeCore
+3. 跳过 CNI 插件 (边缘节点使用 host 网络)
+4. 安装 KubeEdge EdgeCore (已配置 EdgeMesh 准备工作)
 5. 创建并启动 edgecore 服务
 6. 建立与云端的连接
+
+**网络模式**: 边缘节点使用 host 网络模式，不需要 CNI 插件。EdgeMesh 将用于服务网格功能。
 
 ### 第 4 步：验证连接
 
@@ -414,10 +415,45 @@ sudo rm -f /usr/local/bin/ctr
 sudo rm -f /usr/local/bin/runc
 ```
 
+## EdgeMesh 服务网格部署
+
+边缘节点安装完成后，可以部署 EdgeMesh 实现边缘服务网格功能：
+
+### 前置条件
+
+边缘节点已完成以下配置（安装脚本已自动完成）：
+- ✅ metaServer 已启用 (`enable: true`)
+- ✅ clusterDNS 配置为 `169.254.96.16`
+- ✅ 网络模式为 host（无 CNI）
+
+### 部署步骤
+
+EdgeMesh 需要在云端通过 Helm 部署，详细步骤请参考：
+
+**📘 [EdgeMesh 完整部署指南](../../EDGEMESH_DEPLOYMENT.md)**
+
+部署 EdgeMesh 后，边缘节点将获得以下能力：
+- 🔍 服务发现：通过 EdgeMesh DNS
+- 🌐 服务访问：边缘到边缘、边缘到云端
+- 📡 高可用通信：支持多中继节点
+
+### 快速验证
+
+```bash
+# 在边缘节点上验证 EdgeMesh Agent 运行
+kubectl get pods -n kubeedge -l kubeedge=edgemesh-agent -o wide
+
+# 测试服务发现
+nslookup hostname-svc
+# 应该解析到 EdgeMesh DNS (169.254.96.16)
+```
+
 ## 相关资源
 
 - **KubeEdge 官方文档**: https://kubeedge.io/docs/
+- **EdgeMesh 官方文档**: https://edgemesh.netlify.app/
 - **GitHub Issues**: https://github.com/kubeedge/kubeedge/issues
+- **EdgeMesh GitHub**: https://github.com/kubeedge/edgemesh
 - **EdgeCore 日志**: `/var/log/kubeedge/edgecore.log`
 
 ## 快速参考

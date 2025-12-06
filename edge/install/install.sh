@@ -285,24 +285,10 @@ else
   exit 1
 fi
 
-# Install CNI plugins (强制从离线包安装)
-echo "[4/6] Installing CNI plugins..." | tee -a "$INSTALL_LOG"
-CNI_DIR=$(find "$SCRIPT_DIR" -type d -name "cni-plugins" 2>/dev/null | head -1)
-if [ -n "$CNI_DIR" ] && [ -d "$CNI_DIR" ]; then
-  mkdir -p /opt/cni/bin
-  cp "$CNI_DIR"/* /opt/cni/bin/ || true
-  chmod +x /opt/cni/bin/*
-  echo "✓ CNI plugins installed to /opt/cni/bin" | tee -a "$INSTALL_LOG"
-else
-  echo "Error: CNI plugins not found in offline package" | tee -a "$INSTALL_LOG"
-  exit 1
-fi
-
-# Create CNI config directory (EdgeCore's edged module will create CNI config automatically)
-echo "[4.2/6] Preparing CNI directory..." | tee -a "$INSTALL_LOG"
-mkdir -p /etc/cni/net.d
-echo "  ✓ CNI目录已创建 (EdgeCore的edged模块将根据PodCIDR自动配置CNI)" | tee -a "$INSTALL_LOG"
-echo "✓ CNI准备完成" | tee -a "$INSTALL_LOG"
+# Note: CNI is NOT required for edge nodes using host networking
+# EdgeMesh will be used for service mesh capabilities
+echo "[4/6] CNI not required (using host networking)" | tee -a "$INSTALL_LOG"
+echo "  ✓ EdgeMesh 将用于边缘服务网格功能" | tee -a "$INSTALL_LOG"
 
 
 # Deploy Mosquitto MQTT Broker for IoT devices
@@ -522,13 +508,9 @@ modules:
       cgroupDriver: systemd
       cgroupsPerQOS: true
       clusterDNS:
-        - 10.43.0.10
+        - 169.254.96.16
       clusterDomain: cluster.local
       containerRuntimeEndpoint: unix:///run/containerd/containerd.sock
-      networkPluginName: cni
-      networkPluginMTU: 1500
-      cniConfDir: /etc/cni/net.d
-      cniBinDir: /opt/cni/bin
       contentType: application/json
       enableDebuggingHandlers: true
       evictionHard:
@@ -565,7 +547,7 @@ modules:
     contextSendModule: websocket
     enable: true
     metaServer:
-      enable: false
+      enable: true
       server: 127.0.0.1:10550
     remoteQueryTimeout: 60
   serviceBus:
