@@ -276,7 +276,7 @@ modules:
   edgeHub:
     enable: true
     heartbeat: 15
-    httpServer: https://CLOUD_IP_PLACEHOLDER:CLOUD_PORT_PLACEHOLDER
+    httpServer: https://CLOUD_IP_PLACEHOLDER:10002
     messageBurst: 60
     messageQPS: 30
     projectID: e632aba927ea4ac2b575ec1603d56f10
@@ -319,7 +319,7 @@ modules:
       address: 127.0.0.1
       cgroupDriver: cgroupfs
       cgroupsPerQOS: true
-      clusterDNS: ""
+      clusterDNS: []
       clusterDomain: cluster.local
       containerRuntimeEndpoint: unix:///run/containerd/containerd.sock
       contentType: application/json
