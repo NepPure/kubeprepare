@@ -161,6 +161,14 @@ jobs:
             exit 1
           fi
           
+          # 检查清理脚本是否存在
+          CLEANUP_SCRIPT="${GITHUB_WORKSPACE}/edge/install/cleanup.sh"
+          CLEANUP_OPTION=""
+          if [ -f "$CLEANUP_SCRIPT" ]; then
+            CLEANUP_OPTION="-C $(dirname "$CLEANUP_SCRIPT") cleanup.sh"
+            echo "✓ 将包含 cleanup.sh 清理脚本"
+          fi
+          
           PACKAGE_NAME="kubeedge-edge-${KUBEEDGE_VERSION}-${{ matrix.arch }}.tar.gz"
           tar -czf "$PACKAGE_NAME" \
             edgecore \
@@ -170,7 +178,8 @@ jobs:
             cni-plugins \
             images \
             meta \
-            -C "$(dirname "$INSTALL_SCRIPT")" install.sh
+            -C "$(dirname "$INSTALL_SCRIPT")" install.sh \
+            $CLEANUP_OPTION
           
           echo "✓ 包已创建: $PACKAGE_NAME"
           echo "包大小: $(du -h "$PACKAGE_NAME" | cut -f1)"

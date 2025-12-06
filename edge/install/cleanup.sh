@@ -35,49 +35,27 @@ echo "  - CNI 插件"
 [ "$HAS_DOCKER" = true ] && echo "  - Docker (系统安装)"
 [ "$HAS_SYSTEM_CONTAINERD" = true ] && echo "  - Containerd (系统包管理器安装)"
 
-# 如果检测到 Docker，询问是否卸载
-UNINSTALL_DOCKER=false
+# 默认不卸载 Docker 和系统 containerd (可通过环境变量控制)
+UNINSTALL_DOCKER=${UNINSTALL_DOCKER:-false}
+UNINSTALL_SYSTEM_CONTAINERD=${UNINSTALL_SYSTEM_CONTAINERD:-false}
+
 if [ "$HAS_DOCKER" = true ]; then
-  echo ""
-  echo "⚠️  警告: 检测到系统已安装 Docker"
-  echo "   Docker 依赖 containerd，卸载 Docker 会同时卸载其 containerd"
-  echo "   这可能影响其他容器工作负载！"
-  echo ""
-  read -p "是否卸载 Docker？(y/N): " -n 1 -r
-  echo ""
-  if [[ $REPLY =~ ^[Yy]$ ]]; then
-    UNINSTALL_DOCKER=true
-    echo "✓ 确认卸载 Docker"
+  if [ "$UNINSTALL_DOCKER" = "true" ]; then
+    echo "⚠️  将卸载 Docker (UNINSTALL_DOCKER=true)"
   else
-    echo "❌ 保留 Docker，将只清理 EdgeCore 和离线安装的 containerd"
+    echo "ℹ️  保留 Docker (如需卸载，请设置: UNINSTALL_DOCKER=true)"
   fi
 fi
 
-# 如果检测到系统 containerd，询问是否卸载
-UNINSTALL_SYSTEM_CONTAINERD=false
 if [ "$HAS_SYSTEM_CONTAINERD" = true ] && [ "$UNINSTALL_DOCKER" = false ]; then
-  echo ""
-  echo "⚠️  警告: 检测到系统通过包管理器安装了 containerd"
-  echo "   卸载可能影响其他依赖 containerd 的服务"
-  echo ""
-  read -p "是否卸载系统 containerd？(y/N): " -n 1 -r
-  echo ""
-  if [[ $REPLY =~ ^[Yy]$ ]]; then
-    UNINSTALL_SYSTEM_CONTAINERD=true
-    echo "✓ 确认卸载系统 containerd"
+  if [ "$UNINSTALL_SYSTEM_CONTAINERD" = "true" ]; then
+    echo "⚠️  将卸载系统 containerd (UNINSTALL_SYSTEM_CONTAINERD=true)"
   else
-    echo "❌ 保留系统 containerd"
+    echo "ℹ️  保留系统 containerd (如需卸载，请设置: UNINSTALL_SYSTEM_CONTAINERD=true)"
   fi
 fi
 
-echo ""
-read -p "确认清理 EdgeCore 和相关组件？(y/N): " -n 1 -r
-echo ""
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-  echo "❌ 用户取消清理"
-  exit 0
-fi
-
+echo "⚠️  开始自动清理 EdgeCore 和相关组件..."
 echo ""
 echo "[边缘端] 开始清理 EdgeCore..."
 echo ""

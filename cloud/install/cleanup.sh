@@ -38,14 +38,7 @@ if [ "$HAS_DOCKER" = true ]; then
   echo ""
 fi
 
-echo ""
-read -p "确认清理 K3s 和 CloudCore？(y/N): " -n 1 -r
-echo ""
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-  echo "❌ 用户取消清理"
-  exit 0
-fi
-
+echo "⚠️  开始自动清理 K3s 和 CloudCore..."
 echo ""
 echo "[云端] 开始清理 K3s 和 CloudCore..."
 echo ""

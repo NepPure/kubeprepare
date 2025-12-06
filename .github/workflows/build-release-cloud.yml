@@ -161,11 +161,18 @@ jobs:
           cp keadm "$TEMP_PKG_DIR/"
           cp -r images "$TEMP_PKG_DIR/"
           
-          # 复制安装脚本（两个）
+          # 复制安装脚本（三个：install.sh, install-kubeedge-only.sh, cleanup.sh）
           cp "$INSTALL_SCRIPT" "$TEMP_PKG_DIR/"
           if [ -f "$INSTALL_KUBEEDGE_ONLY" ]; then
             cp "$INSTALL_KUBEEDGE_ONLY" "$TEMP_PKG_DIR/"
             echo "✓ 已包含 install-kubeedge-only.sh 脚本（用于已有 K3s/K8s 的场景）"
+          fi
+          
+          # 复制清理脚本
+          CLEANUP_SCRIPT="$INSTALL_DIR/cleanup.sh"
+          if [ -f "$CLEANUP_SCRIPT" ]; then
+            cp "$CLEANUP_SCRIPT" "$TEMP_PKG_DIR/"
+            echo "✓ 已包含 cleanup.sh 清理脚本"
           fi
           
           # 创建 README
