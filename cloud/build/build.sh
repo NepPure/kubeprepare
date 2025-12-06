@@ -62,6 +62,9 @@ if ! wget -q -O "kubeedge.tar.gz" "$KUBEEDGE_URL"; then
   exit 1
 fi
 tar -xzf "kubeedge.tar.gz"
+# Extract cloudcore binary from the archive
+cp "kubeedge-v${KUBEEDGE_VERSION}-linux-${ARCH}/cloud/cloudcore/cloudcore" ./cloudcore
+chmod +x ./cloudcore
 rm "kubeedge.tar.gz"
 echo "✓ KubeEdge 云端包下载完成"
 
@@ -74,6 +77,9 @@ if ! wget -q -O "keadm.tar.gz" "$KEADM_URL"; then
   exit 1
 fi
 tar -xzf "keadm.tar.gz"
+# Extract keadm binary from the archive
+cp "keadm-v${KUBEEDGE_VERSION}-linux-${ARCH}/keadm/keadm" ./keadm
+chmod +x ./keadm
 rm "keadm.tar.gz"
 echo "✓ KubeEdge keadm 下载完成"
 
