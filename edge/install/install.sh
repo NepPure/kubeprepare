@@ -6,6 +6,7 @@ set -euo pipefail
 # 示例: sudo ./install.sh 192.168.1.100:10000 <token>
 #       sudo ./install.sh 192.168.1.100:10000 <token> edge-node-1
 
+
 if [ "$EUID" -ne 0 ]; then
   echo "错误：此脚本需要使用 root 或 sudo 运行"
   exit 1
@@ -13,16 +14,22 @@ fi
 
 CLOUD_ADDRESS="${1:-}"
 EDGE_TOKEN="${2:-}"
-NODE_NAME="${3:-$(hostname)}"
+NODE_NAME="${3:-}"
 KUBEEDGE_VERSION="1.22.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_LOG="/var/log/kubeedge-edge-install.log"
 
 # 验证参数
-if [ -z "$CLOUD_ADDRESS" ] || [ -z "$EDGE_TOKEN" ]; then
+if [ -z "$CLOUD_ADDRESS" ] || [ -z "$EDGE_TOKEN" ] || [ -z "$NODE_NAME" ]; then
   echo "错误：缺少必需的参数"
-  echo "用法: sudo ./install.sh <云端地址> <token> [可选-节点名称]"
-  echo "示例: sudo ./install.sh 192.168.1.100:10000 <token>"
+  echo "用法: sudo ./install.sh <云端地址> <token> <节点名称>"
+  echo "示例: sudo ./install.sh 192.168.1.100:10000 <token> edge-node-1"
+  exit 1
+fi
+
+# 校验 nodename 合法性（小写、字母数字、-、.，且首尾为字母数字）
+if ! [[ "$NODE_NAME" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$ ]]; then
+  echo "错误：节点名称 '$NODE_NAME' 不符合 RFC 1123 规范，必须为小写字母、数字、'-'或'.'，且首尾为字母数字。"
   exit 1
 fi
 
