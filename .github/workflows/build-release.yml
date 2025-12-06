@@ -64,7 +64,7 @@ jobs:
           KUBEEDGE_VERSION="1.22.0"
           
           # 1. 下载 k3s 二进制文件
-          echo "[1/5] 下载 k3s 二进制文件..."
+          echo "[1/6] 下载 k3s 二进制文件..."
           if [ "${{ matrix.arch }}" = "amd64" ]; then
             K3S_URL="https://github.com/k3s-io/k3s/releases/download/${K3S_VERSION}/k3s"
           else
@@ -75,7 +75,7 @@ jobs:
           echo "✓ k3s 下载完成"
           
           # 2. 下载 KubeEdge 云端包
-          echo "[2/5] 下载 KubeEdge 云端包..."
+          echo "[2/6] 下载 KubeEdge 云端包..."
           KUBEEDGE_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/kubeedge-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
           wget -q -O kubeedge.tar.gz "$KUBEEDGE_URL" || (echo "错误：无法下载 KubeEdge 云端包" && exit 1)
           tar -xzf kubeedge.tar.gz
@@ -85,7 +85,7 @@ jobs:
           echo "✓ KubeEdge 云端包下载完成"
           
           # 3. 下载 KubeEdge keadm
-          echo "[3/5] 下载 KubeEdge keadm..."
+          echo "[3/6] 下载 KubeEdge keadm..."
           KEADM_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/keadm-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
           wget -q -O keadm.tar.gz "$KEADM_URL" || (echo "错误：无法下载 KubeEdge keadm" && exit 1)
           tar -xzf keadm.tar.gz
@@ -95,7 +95,7 @@ jobs:
           echo "✓ KubeEdge keadm 下载完成"
           
           # 4. 下载 k3s 容器镜像
-          echo "[4/5] 下载 k3s 容器镜像..."
+          echo "[4/6] 下载 k3s 容器镜像..."
           mkdir -p images
           
           K3S_IMAGES=(
@@ -116,7 +116,7 @@ jobs:
           echo "✓ 镜像处理完成"
           
           # 5. 创建配置模板
-          echo "[5/5] 创建配置模板..."
+          echo "[5/6] 创建配置模板..."
           mkdir -p config/kubeedge
           cat > config/kubeedge/cloudcore-config.yaml << 'EOFCONFIG'
           apiVersion: cloudcore.config.kubeedge.io/v1alpha2
@@ -159,10 +159,12 @@ jobs:
           echo "✓ 配置模板已创建"
           
           # 6. 打包离线安装包
-          echo "[6/5] 创建离线安装包..."
-          INSTALL_SCRIPT="$(pwd)/../../../cloud/install/install.sh"
+          echo "[6/6] 创建离线安装包..."
+          # install.sh 在 GITHUB_WORKSPACE/cloud/install/ 目录
+          INSTALL_SCRIPT="${GITHUB_WORKSPACE}/cloud/install/install.sh"
           if [ ! -f "$INSTALL_SCRIPT" ]; then
             echo "错误：找不到安装脚本 $INSTALL_SCRIPT"
+            ls -la "${GITHUB_WORKSPACE}/cloud/install/" || echo "install 目录不存在"
             exit 1
           fi
           
@@ -193,7 +195,7 @@ jobs:
           CNI_VERSION="1.3.0"
           
           # 1. 下载 KubeEdge 边缘端包
-          echo "[1/4] 下载 KubeEdge 边缘端包..."
+          echo "[1/6] 下载 KubeEdge 边缘端包..."
           EDGESITE_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/edgesite-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
           wget -q -O edgesite.tar.gz "$EDGESITE_URL" || (echo "错误：无法下载 KubeEdge 边缘端包" && exit 1)
           tar -xzf edgesite.tar.gz
@@ -203,7 +205,7 @@ jobs:
           echo "✓ KubeEdge 边缘端包下载完成"
           
           # 2. 下载 KubeEdge keadm
-          echo "[2/4] 下载 KubeEdge keadm..."
+          echo "[2/6] 下载 KubeEdge keadm..."
           KEADM_URL="https://github.com/kubeedge/kubeedge/releases/download/v${KUBEEDGE_VERSION}/keadm-v${KUBEEDGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
           wget -q -O keadm.tar.gz "$KEADM_URL" || (echo "错误：无法下载 KubeEdge keadm" && exit 1)
           tar -xzf keadm.tar.gz
@@ -213,7 +215,7 @@ jobs:
           echo "✓ KubeEdge keadm 下载完成"
           
           # 3. 下载 containerd 和 runc
-          echo "[3/4] 下载 containerd 和 runc..."
+          echo "[3/6] 下载 containerd 和 runc..."
           CONTAINERD_URL="https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-${{ matrix.arch }}.tar.gz"
           if ! wget -q -O containerd.tar.gz "$CONTAINERD_URL"; then
             echo "警告：无法下载 containerd v${CONTAINERD_VERSION}，尝试备用版本"
@@ -237,7 +239,7 @@ jobs:
           fi
           
           # 4. 下载 CNI 插件
-          echo "[4/4] 下载 CNI 插件..."
+          echo "[4/6] 下载 CNI 插件..."
           CNI_URL="https://github.com/containernetworking/plugins/releases/download/v${CNI_VERSION}/cni-plugins-linux-${{ matrix.arch }}-v${CNI_VERSION}.tgz"
           if wget -q -O cni-plugins.tgz "$CNI_URL"; then
             mkdir -p cni-plugins
@@ -249,7 +251,7 @@ jobs:
           fi
           
           # 5. 创建配置模板
-          echo "[5/4] 创建配置模板..."
+          echo "[5/6] 创建配置模板..."
           mkdir -p config/kubeedge
           cat > config/kubeedge/edgecore-config.yaml << 'EOFCONFIG'
           apiVersion: edgecore.config.kubeedge.io/v1alpha2
@@ -285,10 +287,12 @@ jobs:
           echo "✓ 配置模板已创建"
           
           # 6. 打包离线安装包
-          echo "[6/4] 创建离线安装包..."
-          INSTALL_SCRIPT="$(pwd)/../../../edge/install/install.sh"
+          echo "[6/6] 创建离线安装包..."
+          # install.sh 在 GITHUB_WORKSPACE/edge/install/ 目录
+          INSTALL_SCRIPT="${GITHUB_WORKSPACE}/edge/install/install.sh"
           if [ ! -f "$INSTALL_SCRIPT" ]; then
             echo "错误：找不到安装脚本 $INSTALL_SCRIPT"
+            ls -la "${GITHUB_WORKSPACE}/edge/install/" || echo "install 目录不存在"
             exit 1
           fi
           
