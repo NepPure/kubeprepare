@@ -115,15 +115,33 @@ EdgeMesh 提供边缘服务发现和流量代理：
 - **高可用**: 支持配置多个中继节点
 - **跨网络**: 支持边缘节点在不同网络环境下的通信
 
-> 📘 详细部署步骤请参考 [EdgeMesh 部署指南](./EDGEMESH_DEPLOYMENT.md)
+> 📘 详细部署步骤请参考 [EdgeMesh 部署指南](./docs/EDGEMESH_DEPLOYMENT.md)
 
 ## 详细文档
 
-- [云端安装指南](./cloud/install/README.md)
-- [边缘端安装指南](./edge/install/README.md)
-- [EdgeMesh 部署指南](./EDGEMESH_DEPLOYMENT.md) - 边缘服务网格部署
-- [EdgeCore 配置最佳实践](./EDGECORE_CONFIG_BEST_PRACTICES.md) - EdgeCore + EdgeMesh 配置说明
-- [离线镜像修复报告](./OFFLINE_IMAGE_FIX.md) - 完整离线支持的技术细节
+### 安装指南
+- [云端安装指南](./cloud/install/README.md) - K3s + CloudCore 完整安装流程
+- [边缘端安装指南](./edge/install/README.md) - EdgeCore 安装和配置
+- [快速部署指南](./docs/QUICK_DEPLOY.md) - 快速上手部署步骤
+
+### 配置和最佳实践
+- [EdgeMesh 部署指南](./docs/EDGEMESH_DEPLOYMENT.md) - 边缘服务网格完整部署方案（含官方最佳实践）
+- [EdgeCore 配置最佳实践](./docs/EDGECORE_CONFIG_BEST_PRACTICES.md) - EdgeCore + EdgeMesh 最小化配置
+- [K3s 网络配置详解](./docs/K3S_NETWORK_CONFIG.md) - K3s 网络架构和配置说明
+
+### 功能扩展
+- [IoT MQTT 集成指南](./docs/IOT_MQTT_INTEGRATION.md) - 边缘端 MQTT Broker 部署
+- [SSH 密钥配置](./docs/SSH_KEY_SETUP.md) - SSH 免密访问配置
+
+### 技术研究和分析
+- [项目结构说明](./docs/PROJECT_STRUCTURE.md) - 项目目录和文件组织
+- [CI/CD 架构设计](./docs/CI_CD_ARCHITECTURE.md) - GitHub Actions 自动化构建
+- [构建流程总结](./docs/BUILD_FLOW_SUMMARY.md) - 离线包构建流程详解
+- [离线镜像修复报告](./docs/OFFLINE_IMAGE_FIX.md) - 完整离线支持的技术实现
+- [CI/CD 变更日志](./docs/CHANGELOG_CI_CD.md) - GitHub Actions 配置变更记录
+
+### 测试和验证
+- [测试检查清单](./docs/TESTING_CHECKLIST.md) - 完整的功能测试清单
 
 ## 验证工具
 
@@ -173,7 +191,7 @@ helm install edgemesh ./helm-charts/edgemesh.tgz \
 
 **完全离线**: EdgeMesh 镜像和 Helm Chart 已预先打包在 cloud 安装包中，无需外网连接。
 
-详细步骤参考 [EdgeMesh 部署指南](./EDGEMESH_DEPLOYMENT.md)
+详细步骤参考 [EdgeMesh 部署指南](./docs/EDGEMESH_DEPLOYMENT.md)
 
 ## 版本信息
 
