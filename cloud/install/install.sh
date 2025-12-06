@@ -67,11 +67,10 @@ echo "✓ Binaries located" | tee -a "$INSTALL_LOG"
 
 # Check prerequisites
 echo "[2/7] Checking prerequisites..." | tee -a "$INSTALL_LOG"
-for cmd in systemctl docker kubectl; do
-  if ! command -v "$cmd" &> /dev/null; then
-    echo "Warning: $cmd not found. Installation may fail." | tee -a "$INSTALL_LOG"
-  fi
-done
+if ! command -v systemctl &> /dev/null; then
+  echo "Error: systemctl not found. This script requires systemd." | tee -a "$INSTALL_LOG"
+  exit 1
+fi
 echo "✓ Prerequisites checked" | tee -a "$INSTALL_LOG"
 
 # Install k3s
