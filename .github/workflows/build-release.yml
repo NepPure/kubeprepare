@@ -353,26 +353,22 @@ jobs:
           echo "✓ 包已创建: $PACKAGE_NAME"
           echo "包大小: $(du -h "$PACKAGE_NAME" | cut -f1)"
 
-      - name: 准备输出目录
+      - name: 生成校验和并准备发布文件
         run: |
           BUILD_DIR="build-${{ matrix.arch }}"
-          mkdir -p build_output
-          cp "$BUILD_DIR/cloud/"*.tar.gz build_output/ 2>/dev/null || true
-          cp "$BUILD_DIR/edge/"*.tar.gz build_output/ 2>/dev/null || true
-          ls -lh build_output/
-
-      - name: 生成校验和
-        run: |
-          cd build_output
-          sha256sum *.tar.gz > checksums-${{ matrix.arch }}.txt
-          cat checksums-${{ matrix.arch }}.txt
-
-      - name: 上传构建产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: packages-${{ matrix.arch }}
-          path: build_output/*
-          retention-days: 1
+          cd "$BUILD_DIR/cloud"
+          sha256sum *.tar.gz > checksums-cloud-${{ matrix.arch }}.txt
+          cd ../edge
+          sha256sum *.tar.gz > checksums-edge-${{ matrix.arch }}.txt
+          
+          # 合并校验和文件
+          mkdir -p "${GITHUB_WORKSPACE}/release_files"
+          cat "$BUILD_DIR/cloud/checksums-cloud-${{ matrix.arch }}.txt" >> "${GITHUB_WORKSPACE}/release_files/checksums.txt"
+          cat "$BUILD_DIR/edge/checksums-edge-${{ matrix.arch }}.txt" >> "${GITHUB_WORKSPACE}/release_files/checksums.txt"
+          
+          # 复制所有tar.gz文件到release目录
+          cp "$BUILD_DIR/cloud/"*.tar.gz "${GITHUB_WORKSPACE}/release_files/"
+          cp "$BUILD_DIR/edge/"*.tar.gz "${GITHUB_WORKSPACE}/release_files/"
 
   release:
     needs: build
@@ -383,61 +379,30 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-
-      - name: 下载所有构建产物
-        uses: actions/download-artifact@v4
-        with:
-          path: release_files
-
-      - name: 验证构建产物
+      
+      - name: 验证发布文件
         run: |
-          if [ ! -d release_files ] || ! find release_files -type f | grep -q .; then
-            echo "未找到任何构建产物，release_files 为空" >&2
-            find release_files -maxdepth 2 -type f 2>/dev/null || true
+          if [ ! -d release_files ] || [ -z "$(ls -A release_files 2>/dev/null)" ]; then
+            echo "错误：未找到构建产物" >&2
             exit 1
           fi
-          echo "已下载的构建产物:"
-          find release_files -type f
-
-      - name: 合并所有文件
-        run: |
-          mkdir -p final_release
-          find release_files -type f \( -name "*.tar.gz" -o -name "checksums-*.txt" \) -exec cp {} final_release/ \;
-          
-          # 合并所有校验和文件
-          touch final_release/checksums.txt
-          for file in final_release/checksums-*.txt; do
-            if [ -f "$file" ]; then
-              cat "$file" >> final_release/checksums.txt
-              rm "$file"
-            fi
-          done
-          
-          ls -lh final_release/
+          echo "准备发布的文件:"
+          ls -lh release_files/
 
       - name: 创建 Release 并上传资产
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ env.TAG_VERSION }}
           files: |
-            final_release/kubeedge-cloud-*.tar.gz
-            final_release/kubeedge-edge-*.tar.gz
-            final_release/checksums.txt
+            release_files/kubeedge-cloud-*.tar.gz
+            release_files/kubeedge-edge-*.tar.gz
+            release_files/checksums.txt
           generate_release_notes: true
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 上传产物到 GitHub Actions 归档
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-artifacts
-          path: release_files/
-          retention-days: 90
-          if-no-files-found: warn
-
       - name: 清理
         if: always()
         run: |
-          rm -rf release_files final_release
+          rm -rf release_files
