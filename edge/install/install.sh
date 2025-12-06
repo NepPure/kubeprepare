@@ -119,6 +119,10 @@ else
   echo "Warning: CNI plugins not found" | tee -a "$INSTALL_LOG"
 fi
 
+
+# Install systemd service dir variable early for MQTT and EdgeCore
+SYSTEMD_DIR=$(find "$SCRIPT_DIR" -type d -name "systemd" 2>/dev/null | head -1)
+
 # Deploy Mosquitto MQTT Broker for IoT devices
 echo "[4.5/6] Deploying Mosquitto MQTT Broker for IoT devices..." | tee -a "$INSTALL_LOG"
 IMAGES_DIR=$(find "$SCRIPT_DIR" -type d -name "images" 2>/dev/null | head -1)
