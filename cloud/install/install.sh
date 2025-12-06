@@ -114,9 +114,13 @@ ExecStart=/usr/local/bin/k3s server \\
   --node-name=$NODE_NAME \\
   --tls-san=$EXTERNAL_IP \\
   --bind-address=0.0.0.0 \\
+  --cluster-cidr=10.42.0.0/16 \\
+  --service-cidr=10.43.0.0/16 \\
+  --cluster-dns=10.43.0.10 \\
   --kube-apiserver-arg=bind-address=0.0.0.0 \\
   --kube-apiserver-arg=advertise-address=$EXTERNAL_IP \\
   --kube-controller-manager-arg=bind-address=0.0.0.0 \\
+  --kube-controller-manager-arg=node-cidr-mask-size=24 \\
   --kube-scheduler-arg=bind-address=0.0.0.0
 KillMode=process
 Restart=always

@@ -191,11 +191,20 @@ if [ -n "$CNI_DIR" ] && [ -d "$CNI_DIR" ]; then
   mkdir -p /opt/cni/bin
   cp "$CNI_DIR"/* /opt/cni/bin/ || true
   chmod +x /opt/cni/bin/*
-  echo "✓ CNI plugins installed" | tee -a "$INSTALL_LOG"
+  echo "✓ CNI plugins installed to /opt/cni/bin" | tee -a "$INSTALL_LOG"
 else
   echo "Error: CNI plugins not found in offline package" | tee -a "$INSTALL_LOG"
   exit 1
 fi
+
+# Configure CNI network directory (配置由K8s PodCIDR自动管理)
+echo "[4.2/6] Configuring CNI network..." | tee -a "$INSTALL_LOG"
+mkdir -p /etc/cni/net.d
+
+echo "  注意: CNI网络配置将由Kubernetes控制平面自动管理" | tee -a "$INSTALL_LOG"
+echo "  Cloud端K3s会为每个edge节点分配独立的PodCIDR(如10.42.X.0/24)" | tee -a "$INSTALL_LOG"
+echo "  EdgeCore将根据分配的PodCIDR自动创建CNI配置" | tee -a "$INSTALL_LOG"
+echo "✓ CNI环境已就绪,等待K8s分配PodCIDR" | tee -a "$INSTALL_LOG"
 
 
 # Deploy Mosquitto MQTT Broker for IoT devices
@@ -414,7 +423,8 @@ modules:
       address: 127.0.0.1
       cgroupDriver: systemd
       cgroupsPerQOS: true
-      clusterDNS: []
+      clusterDNS:
+        - 10.43.0.10
       clusterDomain: cluster.local
       containerRuntimeEndpoint: unix:///run/containerd/containerd.sock
       contentType: application/json
