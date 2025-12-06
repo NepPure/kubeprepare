@@ -493,7 +493,7 @@ if [ -d "$HELM_CHART_DIR" ] && [ -f "$HELM_CHART_DIR/edgemesh.tgz" ]; then
     echo "生成 EdgeMesh PSK: $EDGEMESH_PSK" | tee -a "$INSTALL_LOG"
     
     # Get master node name for relay
-    MASTER_NODE=$(/usr/local/bin/kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+    MASTER_NODE=$($KUBECTL get nodes -o jsonpath='{.items[0].metadata.name}')
     echo "使用 Relay Node: $MASTER_NODE" | tee -a "$INSTALL_LOG"
     
     # Install EdgeMesh using local helm chart
@@ -509,7 +509,7 @@ if [ -d "$HELM_CHART_DIR" ] && [ -f "$HELM_CHART_DIR/edgemesh.tgz" ]; then
       
       # Wait for EdgeMesh pods
       echo "等待 EdgeMesh Agent Pod 启动..." | tee -a "$INSTALL_LOG"
-      /usr/local/bin/kubectl wait --for=condition=ready pod -l app=edgemesh-agent \
+      $KUBECTL wait --for=condition=ready pod -l app=edgemesh-agent \
         -n kubeedge --timeout=300s 2>&1 | tee -a "$INSTALL_LOG"
       
       # Save PSK to file for edge nodes
