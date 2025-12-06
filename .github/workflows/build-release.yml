@@ -13,10 +13,8 @@ permissions:
 
 jobs:
   build:
-    outputs:
-      tag_version: ${{ steps.set_env.outputs.tag_version }}
     runs-on: ubuntu-latest
-    name: 构建离线包 (${{ matrix.arch }})
+    name: 构建并发布离线包 (${{ matrix.arch }})
     strategy:
       matrix:
         arch: [amd64, arm64]
@@ -355,54 +353,33 @@ jobs:
 
       - name: 生成校验和并准备发布文件
         run: |
-          # 使用环境变量中的BUILD_DIR（绝对路径）
+          # 为云端包生成校验和
           cd "${BUILD_DIR}/cloud"
           sha256sum *.tar.gz > checksums-cloud-${{ matrix.arch }}.txt
+          
+          # 为边缘端包生成校验和
           cd "${BUILD_DIR}/edge"
           sha256sum *.tar.gz > checksums-edge-${{ matrix.arch }}.txt
           
-          # 合并校验和文件
-          mkdir -p "${GITHUB_WORKSPACE}/release_files"
-          cat "${BUILD_DIR}/cloud/checksums-cloud-${{ matrix.arch }}.txt" >> "${GITHUB_WORKSPACE}/release_files/checksums.txt"
-          cat "${BUILD_DIR}/edge/checksums-edge-${{ matrix.arch }}.txt" >> "${GITHUB_WORKSPACE}/release_files/checksums.txt"
+          # 创建发布目录并收集所有文件
+          mkdir -p "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}"
+          cp "${BUILD_DIR}/cloud/"*.tar.gz "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/"
+          cp "${BUILD_DIR}/edge/"*.tar.gz "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/"
           
-          # 复制所有tar.gz文件到release目录
-          cp "${BUILD_DIR}/cloud/"*.tar.gz "${GITHUB_WORKSPACE}/release_files/"
-          cp "${BUILD_DIR}/edge/"*.tar.gz "${GITHUB_WORKSPACE}/release_files/"
+          # 合并校验和文件
+          cat "${BUILD_DIR}/cloud/checksums-cloud-${{ matrix.arch }}.txt" \
+              "${BUILD_DIR}/edge/checksums-edge-${{ matrix.arch }}.txt" \
+              > "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/checksums-${{ matrix.arch }}.txt"
+          
+          echo "=== 准备发布的文件 (${{ matrix.arch }}) ==="
+          ls -lh "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/"
 
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    name: 发布到 GitHub Release
-    env:
-      TAG_VERSION: ${{ needs.build.outputs.tag_version }}
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-      
-      - name: 验证发布文件
-        run: |
-          if [ ! -d release_files ] || [ -z "$(ls -A release_files 2>/dev/null)" ]; then
-            echo "错误：未找到构建产物" >&2
-            exit 1
-          fi
-          echo "准备发布的文件:"
-          ls -lh release_files/
-
-      - name: 创建 Release 并上传资产
+      - name: 上传到 GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ env.TAG_VERSION }}
-          files: |
-            release_files/kubeedge-cloud-*.tar.gz
-            release_files/kubeedge-edge-*.tar.gz
-            release_files/checksums.txt
+          tag_name: ${{ steps.set_env.outputs.tag_version }}
+          files: release-${{ matrix.arch }}/*
           generate_release_notes: true
-          prerelease: false
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 清理
-        if: always()
-        run: |
-          rm -rf release_files
