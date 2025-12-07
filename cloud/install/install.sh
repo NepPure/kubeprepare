@@ -320,7 +320,7 @@ if $KUBECTL -n kubeedge get cm cloudcore 2>/dev/null | grep -q cloudcore; then
     echo "  ✓ dynamicController and cloudStream are already enabled" | tee -a "$INSTALL_LOG"
   else
     # Use kubectl patch to enable dynamicController and cloudStream
-    if $KUBECTL -n kubeedge patch cm cloudcore --type=json -p='[{"op": "replace", "path": "/data/cloudcore.yaml", "value": "modules:\n  cloudHub:\n    advertiseAddress:\n    - '\"$EXTERNAL_IP\"'\n    nodeLimit: 1000\n  cloudStream:\n    enable: true\n    streamPort: 10003\n    tunnelPort: 10004\n  dynamicController:\n    enable: true\n"}]' >> "$INSTALL_LOG" 2>&1; then
+    if $KUBECTL -n kubeedge patch cm cloudcore --type=json -p='[{"op": "replace", "path": "/data/cloudcore.yaml", "value": "modules:\n  cloudHub:\n    advertiseAddress:\n    - '\"$EXTERNAL_IP\"'\n    https:\n      enable: true\n      port: 10002\n    nodeLimit: 1000\n    websocket:\n      enable: true\n      port: 10000\n  cloudStream:\n    enable: true\n    streamPort: 10003\n    tunnelPort: 10004\n  dynamicController:\n    enable: true\n"}]' >> "$INSTALL_LOG" 2>&1; then
       echo "  ✓ dynamicController and cloudStream enabled successfully" | tee -a "$INSTALL_LOG"
       
       # Restart CloudCore pod to apply changes
@@ -375,6 +375,16 @@ DYNAMIC_EOF
     streamPort: 10003
     tunnelPort: 10004
 STREAM_EOF
+    fi
+    
+    # Ensure cloudHub has https and websocket ports configured
+    if ! grep -q "https:" /etc/kubeedge/config/cloudcore.yaml; then
+      # Add https configuration to cloudHub
+      sed -i '/cloudHub:/a\    https:\n      enable: true\n      port: 10002' /etc/kubeedge/config/cloudcore.yaml
+    fi
+    if ! grep -q "websocket:" /etc/kubeedge/config/cloudcore.yaml; then
+      # Add websocket configuration to cloudHub
+      sed -i '/cloudHub:/a\    websocket:\n      enable: true\n      port: 10000' /etc/kubeedge/config/cloudcore.yaml
     fi
     
     echo "  ✓ dynamicController and cloudStream enabled in cloudcore.yaml" | tee -a "$INSTALL_LOG"
