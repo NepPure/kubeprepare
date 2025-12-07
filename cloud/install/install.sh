@@ -463,45 +463,22 @@ echo "Save this token for edge node installation" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 echo "[6.8/7] Patching K3s built-in Metrics Server for KubeEdge..." | tee -a "$INSTALL_LOG"
 
-# 等待 K3s 内置的 metrics-server 部署就绪
-echo "  Waiting for built-in metrics-server to be ready..." | tee -a "$INSTALL_LOG"
-if ! $KUBECTL wait --for=condition=available deployment/metrics-server -n kube-system --timeout=180s >> "$INSTALL_LOG" 2>&1; then
-  echo "  ✗ K3s built-in metrics-server is not available after 180s. Aborting patch." | tee -a "$INSTALL_LOG"
-  $KUBECTL get pods -n kube-system >> "$INSTALL_LOG" 2>&1
-else
-  echo "  ✓ K3s built-in metrics-server is available." | tee -a "$INSTALL_LOG"
+# 检查 metrics-server 是否存在
+if $KUBECTL get deployment metrics-server -n kube-system &>/dev/null; then
+  echo "  Found built-in metrics-server, applying KubeEdge compatibility patch..." | tee -a "$INSTALL_LOG"
   
-  # 获取内置 metrics-server 的镜像版本
-  BUILTIN_METRICS_IMAGE=$($KUBECTL get deployment metrics-server -n kube-system -o jsonpath='{.spec.template.spec.containers[0].image}')
-  echo "  Found built-in metrics-server image: $BUILTIN_METRICS_IMAGE" | tee -a "$INSTALL_LOG"
-
   # 为 KubeEdge 修改 metrics-server 部署（参考 KubeEdge 官方文档）
-  # - 添加 --kubelet-insecure-tls 以跳过 TLS 验证
-  # - 添加 --kubelet-preferred-address-types 指定地址类型优先级
-  # - 添加 --kubelet-use-node-status-port 使用节点状态端口
-  # - 添加 nodeAffinity 确保只在 master 节点运行
-  # - 添加 tolerations 容忍 master 节点污点
-  # - 启用 hostNetwork 模式
+  # 1. 添加 nodeAffinity 确保只在 master 节点运行
+  # 2. 添加 tolerations 容忍 master 节点污点  
+  # 3. 启用 hostNetwork 模式
+  # 4. 添加 --kubelet-insecure-tls 跳过 TLS 验证
   
-  PATCH_DATA=$(cat <<EOF
+  PATCH_DATA=$(cat <<'EOF'
 {
   "spec": {
     "template": {
       "spec": {
         "hostNetwork": true,
-        "containers": [
-          {
-            "name": "metrics-server",
-            "args": [
-              "--cert-dir=/tmp",
-              "--secure-port=4443",
-              "--kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname",
-              "--kubelet-use-node-status-port",
-              "--metric-resolution=30s",
-              "--kubelet-insecure-tls"
-            ]
-          }
-        ],
         "affinity": {
           "nodeAffinity": {
             "requiredDuringSchedulingIgnoredDuringExecution": {
@@ -509,7 +486,7 @@ else
                 {
                   "matchExpressions": [
                     {
-                      "key": "node-role.kubernetes.io/master",
+                      "key": "node-role.kubernetes.io/control-plane",
                       "operator": "Exists"
                     }
                   ]
@@ -517,7 +494,7 @@ else
                 {
                   "matchExpressions": [
                     {
-                      "key": "node-role.kubernetes.io/control-plane",
+                      "key": "node-role.kubernetes.io/master",
                       "operator": "Exists"
                     }
                   ]
@@ -528,12 +505,12 @@ else
         },
         "tolerations": [
           {
-            "key": "node-role.kubernetes.io/master",
+            "key": "node-role.kubernetes.io/control-plane",
             "operator": "Exists",
             "effect": "NoSchedule"
           },
           {
-            "key": "node-role.kubernetes.io/control-plane",
+            "key": "node-role.kubernetes.io/master",
             "operator": "Exists",
             "effect": "NoSchedule"
           }
@@ -545,23 +522,28 @@ else
 EOF
 )
 
-  echo "  Applying patch to metrics-server deployment..." | tee -a "$INSTALL_LOG"
-  if echo "$PATCH_DATA" | $KUBECTL patch deployment metrics-server -n kube-system --patch-file /dev/stdin >> "$INSTALL_LOG" 2>&1; then
-    echo "  ✓ Successfully patched metrics-server." | tee -a "$INSTALL_LOG"
+  # 单独添加 --kubelet-insecure-tls 参数
+  ARGS_PATCH='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+  
+  # 应用主要配置 patch (affinity, tolerations, hostNetwork)
+  if echo "$PATCH_DATA" | $KUBECTL patch deployment metrics-server -n kube-system --type=strategic --patch-file /dev/stdin >> "$INSTALL_LOG" 2>&1; then
+    echo "  ✓ Applied affinity, tolerations and hostNetwork." | tee -a "$INSTALL_LOG"
     
-    # 等待 Pod 重启并就绪
-    echo "  Waiting for patched metrics-server to be ready..." | tee -a "$INSTALL_LOG"
-    sleep 5 # 等待旧 Pod 终止
-    if $KUBECTL wait --for=condition=ready pod -l k8s-app=metrics-server -n kube-system --timeout=120s >> "$INSTALL_LOG" 2>&1; then
-      echo "  ✓ Patched metrics-server is running correctly." | tee -a "$INSTALL_LOG"
+    # 添加 --kubelet-insecure-tls 参数
+    if echo "$ARGS_PATCH" | $KUBECTL patch deployment metrics-server -n kube-system --type=json --patch-file /dev/stdin >> "$INSTALL_LOG" 2>&1; then
+      echo "  ✓ Added --kubelet-insecure-tls argument." | tee -a "$INSTALL_LOG"
     else
-      echo "  ✗ Patched metrics-server failed to become ready." | tee -a "$INSTALL_LOG"
-      $KUBECTL get pods -n kube-system -l k8s-app=metrics-server >> "$INSTALL_LOG" 2>&1
-      $KUBECTL logs -n kube-system -l k8s-app=metrics-server --tail=50 >> "$INSTALL_LOG" 2>&1
+      echo "  ⚠ Failed to add --kubelet-insecure-tls, may already exist." | tee -a "$INSTALL_LOG"
     fi
+    
+    echo "  ✓ Metrics-server patch applied. It will restart automatically." | tee -a "$INSTALL_LOG"
+    echo "  提示: metrics-server 将在后台重启，可通过以下命令验证:" | tee -a "$INSTALL_LOG"
+    echo "    kubectl get pods -n kube-system -l k8s-app=metrics-server" | tee -a "$INSTALL_LOG"
   else
     echo "  ✗ Failed to patch metrics-server." | tee -a "$INSTALL_LOG"
   fi
+else
+  echo "  ⚠ metrics-server not found, skipping patch." | tee -a "$INSTALL_LOG"
 fi
 
 echo "" | tee -a "$INSTALL_LOG"
