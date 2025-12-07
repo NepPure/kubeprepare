@@ -88,7 +88,7 @@ ALL_IMAGES=("${K3S_IMAGES[@]}" "${KUBEEDGE_IMAGES[@]}")
 2. 安装脚本（`edge/install/install.sh`）
    - 在启动 containerd 后，优先 `ctr -n k8s.io images import` 预加载 `pause:3.6`（保证 Sandbox 创建）
    - 在 keadm join 前，预加载 `installation-package:v1.22.0`，避免在线拉取
-   - 设置 `--cloudcore-ipport=<CLOUD_IP>:10002` 使用证书服务端口；移除过时参数；显式 `--remote-runtime-endpoint` 指向 containerd
+   - 设置 `--cloudcore-ipport=<CLOUD_IP>:10000` (WebSocket 端口) 与 `--certport=10002`（证书服务）；移除过时参数；显式 `--remote-runtime-endpoint` 指向 containerd
    - 写入 EdgeCore 配置：启用 `networkPluginName: cni`，`clusterDNS: [169.254.96.16]`（EdgeMesh DNS），并设置 `clusterDomain`
 
 3. 配置一致性
@@ -112,7 +112,8 @@ ctr -n k8s.io images ls | grep installation-package
 
 # 执行 keadm join（无需外网）
 sudo keadm join \
-  --cloudcore-ipport=<CLOUD_IP>:10002 \
+  --cloudcore-ipport=<CLOUD_IP>:10000 \
+  --certport=10002 \
   --edgenode-name=<NODE_NAME> \
   --token=<TOKEN> \
   --kubeedge-version=v1.22.0 \
@@ -124,6 +125,7 @@ sudo keadm join \
 - 仍尝试拉取 installation-package：确认镜像已在 `k8s.io` 命名空间并标签匹配；手动 `ctr import` 后复验
 - Sandbox 创建失败：确认 `pause:3.6` 已导入且 `config.toml` 指向正确；重启 containerd
 - **cgroup driver 冲突**（重要）：keadm join v1.22.0 使用 cgroupfs 路径格式，与 `SystemdCgroup = true` 不兼容，导致 runc 报错 `expected cgroupsPath to be of format "slice:prefix:name"`。**解决方案**：containerd config.toml 中设置 `SystemdCgroup = false`（边缘场景推荐 cgroupfs）
+- **WebSocket 404 错误**（关键）：keadm join 的 `--cloudcore-ipport` 参数应使用 WebSocket 端口（10000），证书下载使用单独的 `--certport=10002`。错误配置为仅 10002 会导致运行时 WebSocket 连接 404。**正确命令**：`keadm join --cloudcore-ipport=<IP>:10000 --certport=10002`
 - Node NotReady：确认 CNI plugins 已安装并生成 node 专属 CIDR；检查 EdgeCore `networkPluginName: cni`
 - DNS 解析异常：确认 `clusterDNS` 使用 `169.254.96.16`（EdgeMesh DNS），避免指向云 CoreDNS
 
