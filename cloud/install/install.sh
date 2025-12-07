@@ -562,6 +562,37 @@ else
 fi
 
 echo "" | tee -a "$INSTALL_LOG"
+echo "=== Configuring svclb to avoid edge nodes ===" | tee -a "$INSTALL_LOG"
+
+# 配置所有 svclb DaemonSet，防止调度到边缘节点
+# K3s 的 Service Load Balancer (svclb) 不应该在边缘节点运行
+SVCLB_COUNT=$($KUBECTL get daemonset -n kube-system -l svccontroller.k3s.cattle.io/svcname --no-headers 2>/dev/null | wc -l)
+
+if [ "$SVCLB_COUNT" -gt 0 ]; then
+  echo "  Found $SVCLB_COUNT svclb DaemonSet(s), adding nodeSelector to exclude edge nodes..." | tee -a "$INSTALL_LOG"
+  
+  # 为所有 svclb DaemonSet 添加 nodeSelector
+  $KUBECTL get daemonset -n kube-system -l svccontroller.k3s.cattle.io/svcname -o name | while read -r ds; do
+    DS_NAME=$(echo "$ds" | cut -d'/' -f2)
+    if $KUBECTL patch "$ds" -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/nodeSelector","value":{"node-role.kubernetes.io/edge":"false"}}]' >> "$INSTALL_LOG" 2>&1; then
+      echo "  ✓ Patched $DS_NAME to exclude edge nodes." | tee -a "$INSTALL_LOG"
+    else
+      # 如果 nodeSelector 已存在，尝试使用 strategic merge
+      if $KUBECTL patch "$ds" -n kube-system --type=strategic -p='{"spec":{"template":{"spec":{"nodeSelector":{"node-role.kubernetes.io/edge":"false"}}}}}' >> "$INSTALL_LOG" 2>&1; then
+        echo "  ✓ Updated $DS_NAME nodeSelector." | tee -a "$INSTALL_LOG"
+      else
+        echo "  ⚠ Failed to patch $DS_NAME." | tee -a "$INSTALL_LOG"
+      fi
+    fi
+  done
+  
+  echo "  ✓ svclb DaemonSets configured to avoid edge nodes." | tee -a "$INSTALL_LOG"
+  echo "  提示: svclb 已配置 nodeSelector (node-role.kubernetes.io/edge: false)" | tee -a "$INSTALL_LOG"
+else
+  echo "  No svclb DaemonSet found, skipping." | tee -a "$INSTALL_LOG"
+fi
+
+echo "" | tee -a "$INSTALL_LOG"
 echo "=== Next Steps ===" | tee -a "$INSTALL_LOG"
 echo "1. Verify k3s cluster:" | tee -a "$INSTALL_LOG"
 echo "   kubectl get nodes" | tee -a "$INSTALL_LOG"
@@ -586,20 +617,17 @@ echo "" | tee -a "$INSTALL_LOG"
 # Print token to stdout for easy copy
 echo ""
 # =====================================
-# 7. Install EdgeMesh (Optional)
+# 7. Install EdgeMesh (Automatic)
 # =====================================
 echo "" | tee -a "$INSTALL_LOG"
-echo "=== 7. 安装 EdgeMesh (可选) ===" | tee -a "$INSTALL_LOG"
+echo "=== 7. 安装 EdgeMesh ===" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 
 # Check if helm-charts directory exists
 HELM_CHART_DIR="$SCRIPT_DIR/helm-charts"
 if [ -d "$HELM_CHART_DIR" ] && [ -f "$HELM_CHART_DIR/edgemesh.tgz" ]; then
-  echo "检测到 EdgeMesh Helm Chart，是否安装 EdgeMesh? (y/n)" | tee -a "$INSTALL_LOG"
-  read -r INSTALL_EDGEMESH
-  
-  if [[ "$INSTALL_EDGEMESH" == "y" || "$INSTALL_EDGEMESH" == "Y" ]]; then
-    echo "[7/7] 安装 EdgeMesh..." | tee -a "$INSTALL_LOG"
+  echo "检测到 EdgeMesh Helm Chart，开始自动安装..." | tee -a "$INSTALL_LOG"
+  echo "[7/7] 安装 EdgeMesh..." | tee -a "$INSTALL_LOG"
     
     # Generate PSK for EdgeMesh
     EDGEMESH_PSK=$(openssl rand -base64 32)
@@ -652,13 +680,6 @@ if [ -d "$HELM_CHART_DIR" ] && [ -f "$HELM_CHART_DIR/edgemesh.tgz" ]; then
         echo "✗ EdgeMesh 安装失败，请检查日志" | tee -a "$INSTALL_LOG"
       fi
     fi
-  else
-    echo "跳过 EdgeMesh 安装" | tee -a "$INSTALL_LOG"
-    echo "如需稍后安装，执行:" | tee -a "$INSTALL_LOG"
-    echo "  helm install edgemesh $HELM_CHART_DIR/edgemesh.tgz --namespace kubeedge \\" | tee -a "$INSTALL_LOG"
-    echo "    --set agent.psk=\$(openssl rand -base64 32) \\" | tee -a "$INSTALL_LOG"
-    echo "    --set agent.relayNodes[0].nodeName=<master-node-name> \\" | tee -a "$INSTALL_LOG"
-    echo "    --set agent.relayNodes[0].advertiseAddress=\"{$CLOUD_IP}\"" | tee -a "$INSTALL_LOG"
   fi
 else
   echo "未检测到 EdgeMesh Helm Chart，跳过安装" | tee -a "$INSTALL_LOG"
