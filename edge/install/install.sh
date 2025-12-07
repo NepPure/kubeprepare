@@ -474,126 +474,66 @@ else
   CLOUD_PORT="10000"
 fi
 
-# 直接生成完整的 edgecore.yaml 配置文件（符合 KubeEdge v1alpha2 官方标准）
-echo "  Generating edgecore configuration..." | tee -a "$INSTALL_LOG"
-cat > /etc/kubeedge/edgecore.yaml << 'EOF'
-apiVersion: edgecore.config.kubeedge.io/v1alpha2
-kind: EdgeCore
-database:
-  aliasName: default
-  dataSource: /var/lib/kubeedge/edgecore.db
-  driverName: sqlite3
-modules:
-  dbTest:
-    enable: false
-  deviceTwin:
-    dmiSockPath: /etc/kubeedge/dmi.sock
-    enable: true
-  edgeHub:
-    enable: true
-    heartbeat: 15
-    httpServer: https://CLOUD_IP_PLACEHOLDER:10002
-    messageBurst: 60
-    messageQPS: 30
-    projectID: e632aba927ea4ac2b575ec1603d56f10
-    quic:
-      enable: false
-      handshakeTimeout: 30
-      readDeadline: 15
-      server: CLOUD_IP_PLACEHOLDER:10001
-      writeDeadline: 15
-    rotateCertificates: true
-    tlsCaFile: /etc/kubeedge/ca/rootCA.crt
-    tlsCertFile: /etc/kubeedge/certs/server.crt
-    tlsPrivateKeyFile: /etc/kubeedge/certs/server.key
-    token: "TOKEN_PLACEHOLDER"
-    websocket:
-      enable: true
-      handshakeTimeout: 30
-      readDeadline: 15
-      server: CLOUD_IP_PLACEHOLDER:CLOUD_PORT_PLACEHOLDER
-      writeDeadline: 15
-  edgeStream:
-    enable: true
-    handshakeTimeout: 30
-    readDeadline: 15
-    server: CLOUD_IP_PLACEHOLDER:10003
-    tlsTunnelCAFile: /etc/kubeedge/ca/rootCA.crt
-    tlsTunnelCertFile: /etc/kubeedge/certs/server.crt
-    tlsTunnelPrivateKeyFile: /etc/kubeedge/certs/server.key
-    writeDeadline: 15
-  edged:
-    enable: true
-    hostnameOverride: NODE_NAME_PLACEHOLDER
-    maxContainerCount: -1
-    maxPerPodContainerCount: 1
-    minimumGCAge: 0s
-    podSandboxImage: kubeedge/pause:3.6
-    registerNodeNamespace: default
-    registerSchedulable: true
-    tailoredKubeletConfig:
-      address: 127.0.0.1
-      cgroupDriver: systemd
-      cgroupsPerQOS: true
-      clusterDNS:
-        - 169.254.96.16
-      clusterDomain: cluster.local
-      containerRuntimeEndpoint: unix:///run/containerd/containerd.sock
-      contentType: application/json
-      enableDebuggingHandlers: true
-      evictionHard:
-        imagefs.available: 15%
-        memory.available: 100Mi
-        nodefs.available: 10%
-        nodefs.inodesFree: 5%
-      evictionPressureTransitionPeriod: 5m0s
-      failSwapOn: false
-      imageGCHighThresholdPercent: 85
-      imageGCLowThresholdPercent: 80
-      imageServiceEndpoint: unix:///run/containerd/containerd.sock
-      maxPods: 110
-      podLogsDir: /var/log/pods
-      registerNode: true
-      rotateCertificates: true
-      serializeImagePulls: true
-      staticPodPath: /etc/kubeedge/manifests
-  eventBus:
-    enable: true
-    eventBusTLS:
-      enable: false
-      tlsMqttCAFile: /etc/kubeedge/ca/rootCA.crt
-      tlsMqttCertFile: /etc/kubeedge/certs/server.crt
-      tlsMqttPrivateKeyFile: /etc/kubeedge/certs/server.key
-    mqttMode: 2
-    mqttQOS: 0
-    mqttRetain: false
-    mqttServerExternal: tcp://127.0.0.1:1883
-    mqttServerInternal: tcp://127.0.0.1:1884
-    mqttSessionQueueSize: 100
-  metaManager:
-    contextSendGroup: hub
-    contextSendModule: websocket
-    enable: true
-    metaServer:
-      enable: true
-      server: 127.0.0.1:10550
-    remoteQueryTimeout: 60
-  serviceBus:
-    enable: false
-  taskManager:
-    enable: false
-EOF
+# Use keadm join to register edge node (following official workflow)
+echo "  Joining edge node using keadm..." | tee -a "$INSTALL_LOG"
 
-# 替换配置文件中的占位符为实际值
-sed -i "s|CLOUD_IP_PLACEHOLDER|${CLOUD_IP}|g" /etc/kubeedge/edgecore.yaml
-sed -i "s|CLOUD_PORT_PLACEHOLDER|${CLOUD_PORT}|g" /etc/kubeedge/edgecore.yaml
-sed -i "s|NODE_NAME_PLACEHOLDER|${NODE_NAME}|g" /etc/kubeedge/edgecore.yaml
-sed -i "s|TOKEN_PLACEHOLDER|${EDGE_TOKEN}|g" /etc/kubeedge/edgecore.yaml
+# Find keadm binary
+KEADM_BIN=$(find "$SCRIPT_DIR" -name "keadm" -type f 2>/dev/null | head -1)
+if [ -z "$KEADM_BIN" ]; then
+  echo "Error: keadm not found in offline package" | tee -a "$INSTALL_LOG"
+  exit 1
+fi
 
-echo "  ✓ EdgeCore configuration generated" | tee -a "$INSTALL_LOG"
+cp "$KEADM_BIN" /usr/local/bin/keadm
+chmod +x /usr/local/bin/keadm
 
-echo "✓ Edge node configuration completed (offline mode)" | tee -a "$INSTALL_LOG"
-echo "  Note: Using local configuration only, no network access required" | tee -a "$INSTALL_LOG"
+# Run keadm join to generate config and download certificates from cloud
+# Note: This will automatically download certs via cloudHub.https (port 10002)
+echo "  Running: keadm join --cloudcore-ipport=${CLOUD_IP}:${CLOUD_PORT} --edgenode-name=${NODE_NAME} --token=<token> --kubeedge-version=v${KUBEEDGE_VERSION}" | tee -a "$INSTALL_LOG"
+
+if /usr/local/bin/keadm join \
+  --cloudcore-ipport="${CLOUD_IP}:${CLOUD_PORT}" \
+  --edgenode-name="${NODE_NAME}" \
+  --token="${EDGE_TOKEN}" \
+  --kubeedge-version="v${KUBEEDGE_VERSION}" \
+  --remote-runtime-endpoint="unix:///run/containerd/containerd.sock" \
+  --runtimetype="remote" >> "$INSTALL_LOG" 2>&1; then
+  
+  echo "  ✓ keadm join completed successfully" | tee -a "$INSTALL_LOG"
+  echo "  ✓ Certificates downloaded from cloud (via port 10002)" | tee -a "$INSTALL_LOG"
+  echo "  ✓ EdgeCore configuration generated" | tee -a "$INSTALL_LOG"
+else
+  echo "  Warning: keadm join reported errors, but will continue with customization" | tee -a "$INSTALL_LOG"
+  echo "  Check $INSTALL_LOG for details" | tee -a "$INSTALL_LOG"
+fi
+
+# Post-join customization: Enable metaServer and adjust MQTT settings
+echo "  Applying edge customizations (metaServer, MQTT)..." | tee -a "$INSTALL_LOG"
+
+if [ -f /etc/kubeedge/config/edgecore.yaml ]; then
+  # Backup original config
+  cp /etc/kubeedge/config/edgecore.yaml /etc/kubeedge/config/edgecore.yaml.keadm-original
+  
+  # Enable metaServer (required for EdgeMesh)
+  if ! grep -q "metaServer:" /etc/kubeedge/config/edgecore.yaml; then
+    # Add metaServer section to metaManager
+    sed -i '/metaManager:/a\    metaServer:\n      enable: true\n      server: 127.0.0.1:10550' /etc/kubeedge/config/edgecore.yaml
+  else
+    # Enable if exists but disabled
+    sed -i '/metaServer:/,/enable:/ s/enable: false/enable: true/' /etc/kubeedge/config/edgecore.yaml
+  fi
+  
+  # Configure MQTT for IoT devices (eventBus)
+  if grep -q "mqttServerExternal:" /etc/kubeedge/config/edgecore.yaml; then
+    sed -i 's|mqttServerExternal:.*|mqttServerExternal: tcp://127.0.0.1:1883|' /etc/kubeedge/config/edgecore.yaml
+    sed -i 's|mqttServerInternal:.*|mqttServerInternal: tcp://127.0.0.1:1884|' /etc/kubeedge/config/edgecore.yaml
+  fi
+  
+  echo "  ✓ Edge customizations applied" | tee -a "$INSTALL_LOG"
+fi
+
+echo "✓ Edge node configuration completed (official keadm workflow)" | tee -a "$INSTALL_LOG"
+echo "  Note: Certificates auto-downloaded from cloud via HTTPS (port 10002)" | tee -a "$INSTALL_LOG"
 
 # Enable and start edgecore service
 systemctl enable edgecore

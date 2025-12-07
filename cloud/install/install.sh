@@ -306,106 +306,73 @@ for i in {1..30}; do
   sleep 2
 done
 
-# Enable CloudCore dynamicController (Required for EdgeMesh metaServer)
-echo "[6.5/7] Enabling CloudCore dynamicController and cloudStream..." | tee -a "$INSTALL_LOG"
-if $KUBECTL -n kubeedge get cm cloudcore 2>/dev/null | grep -q cloudcore; then
+# Enable CloudCore dynamicController and cloudStream (Required for EdgeMesh and edge log/exec)
+echo "[6.5/7] Enabling CloudCore additional features..." | tee -a "$INSTALL_LOG"
+
+# Get current CloudCore configuration
+CLOUDCORE_CONFIG=$($KUBECTL -n kubeedge get cm cloudcore -o jsonpath='{.data.cloudcore\.yaml}' 2>/dev/null || echo "")
+
+if [ -z "$CLOUDCORE_CONFIG" ]; then
+  echo "  Warning: CloudCore ConfigMap not found, skipping customization" | tee -a "$INSTALL_LOG"
+else
   echo "  Patching CloudCore ConfigMap to enable dynamicController and cloudStream..." | tee -a "$INSTALL_LOG"
   
-  # Get current configmap
-  CLOUDCORE_CM_FILE=$(mktemp)
-  $KUBECTL -n kubeedge get cm cloudcore -o yaml > "$CLOUDCORE_CM_FILE"
+  # Use yq-style patch or structured edit (since we don't have yq, use kubectl patch with strategic merge)
+  # Note: We only enable features, not changing certificate paths (keep keadm defaults)
   
-  # Check if dynamicController and cloudStream are already enabled
-  if grep -q "enable: true" "$CLOUDCORE_CM_FILE" | grep -q "dynamicController" 2>/dev/null && grep -q "cloudStream" "$CLOUDCORE_CM_FILE" 2>/dev/null; then
-    echo "  ✓ dynamicController and cloudStream are already enabled" | tee -a "$INSTALL_LOG"
-  else
-    # Use kubectl patch to enable dynamicController and cloudStream
-    # 使用统一的rootCA/server证书链，与edge侧保持一致
-    if $KUBECTL -n kubeedge patch cm cloudcore --type=json -p='[{"op": "replace", "path": "/data/cloudcore.yaml", "value": "modules:\n  cloudHub:\n    advertiseAddress:\n    - '"$EXTERNAL_IP"'\n    https:\n      enable: true\n      port: 10002\n    nodeLimit: 1000\n    websocket:\n      enable: true\n      port: 10000\n  cloudStream:\n    enable: true\n    streamPort: 10003\n    tlsStreamCAFile: /etc/kubeedge/ca/rootCA.crt\n    tlsStreamCertFile: /etc/kubeedge/certs/server.crt\n    tlsStreamPrivateKeyFile: /etc/kubeedge/certs/server.key\n    tunnelPort: 10004\n  dynamicController:\n    enable: true\n"}]' >> "$INSTALL_LOG" 2>&1; then
-      echo "  ✓ dynamicController and cloudStream enabled successfully" | tee -a "$INSTALL_LOG"
-      
-      # Restart CloudCore pod to apply changes
-      echo "  Restarting CloudCore pod to apply configuration..." | tee -a "$INSTALL_LOG"
-      $KUBECTL -n kubeedge delete pod -l kubeedge=cloudcore >> "$INSTALL_LOG" 2>&1 || true
-      
-      # Wait for CloudCore to be ready again
-      echo "  Waiting for CloudCore to restart..." | tee -a "$INSTALL_LOG"
-      sleep 5
-      for i in {1..30}; do
-        if $KUBECTL -n kubeedge get pod -l kubeedge=cloudcore 2>/dev/null | grep -q Running; then
-          echo "  ✓ CloudCore restarted successfully" | tee -a "$INSTALL_LOG"
-          break
-        fi
-        sleep 2
-      done
-    else
-      echo "  Warning: Failed to patch CloudCore ConfigMap" | tee -a "$INSTALL_LOG"
-      echo "  You may need to manually enable dynamicController and cloudStream in /etc/kubeedge/config/cloudcore.yaml" | tee -a "$INSTALL_LOG"
-    fi
-  fi
-  rm -f "$CLOUDCORE_CM_FILE"
-else
-  echo "  Warning: CloudCore ConfigMap not found" | tee -a "$INSTALL_LOG"
-  echo "  Checking if cloudcore.yaml exists in /etc/kubeedge/config/..." | tee -a "$INSTALL_LOG"
-  if [ -f /etc/kubeedge/config/cloudcore.yaml ]; then
-    echo "  Found /etc/kubeedge/config/cloudcore.yaml, enabling dynamicController and cloudStream..." | tee -a "$INSTALL_LOG"
-    # Backup original config
-    cp /etc/kubeedge/config/cloudcore.yaml /etc/kubeedge/config/cloudcore.yaml.bak
+  # Create a patch that enables dynamicController and cloudStream without touching cert paths
+  cat > /tmp/cloudcore-patch.yaml << 'EOF_PATCH'
+data:
+  cloudcore.yaml: |
+    modules:
+      cloudHub:
+        advertiseAddress:
+        - EXTERNAL_IP_PLACEHOLDER
+        https:
+          enable: true
+          port: 10002
+        nodeLimit: 1000
+        websocket:
+          enable: true
+          port: 10000
+      cloudStream:
+        enable: true
+        streamPort: 10003
+        tunnelPort: 10004
+      dynamicController:
+        enable: true
+EOF_PATCH
+  
+  # Replace placeholder with actual IP
+  sed -i "s/EXTERNAL_IP_PLACEHOLDER/$EXTERNAL_IP/g" /tmp/cloudcore-patch.yaml
+  
+  # Apply the patch (strategic merge will preserve other fields including cert paths from keadm)
+  if $KUBECTL -n kubeedge patch cm cloudcore --patch-file /tmp/cloudcore-patch.yaml >> "$INSTALL_LOG" 2>&1; then
+    echo "  ✓ CloudCore features enabled successfully" | tee -a "$INSTALL_LOG"
     
-    # Check if dynamicController section exists
-    if grep -q "dynamicController:" /etc/kubeedge/config/cloudcore.yaml; then
-      # Replace enable: false with enable: true
-      sed -i '/dynamicController:/,/enable:/ s/enable: false/enable: true/' /etc/kubeedge/config/cloudcore.yaml
-    else
-      # Add dynamicController section
-      cat >> /etc/kubeedge/config/cloudcore.yaml << 'DYNAMIC_EOF'
-  dynamicController:
-    enable: true
-DYNAMIC_EOF
-    fi
+    # Restart CloudCore pod to apply changes
+    echo "  Restarting CloudCore pod to apply configuration..." | tee -a "$INSTALL_LOG"
+    $KUBECTL -n kubeedge delete pod -l kubeedge=cloudcore >> "$INSTALL_LOG" 2>&1 || true
     
-    # Check if cloudStream section exists
-    if grep -q "cloudStream:" /etc/kubeedge/config/cloudcore.yaml; then
-      # Enable cloudStream if it's disabled
-      sed -i '/cloudStream:/,/enable:/ s/enable: false/enable: true/' /etc/kubeedge/config/cloudcore.yaml
-    else
-      # Add cloudStream section with unified rootCA/server certificates
-      cat >> /etc/kubeedge/config/cloudcore.yaml << 'STREAM_EOF'
-  cloudStream:
-    enable: true
-    streamPort: 10003
-    tlsStreamCAFile: /etc/kubeedge/ca/rootCA.crt
-    tlsStreamCertFile: /etc/kubeedge/certs/server.crt
-    tlsStreamPrivateKeyFile: /etc/kubeedge/certs/server.key
-    tunnelPort: 10004
-STREAM_EOF
-    fi
-    
-    # 确保cloudStream使用统一的rootCA/server证书链（修复现有配置）
-    if grep -q "tlsStreamCAFile.*streamCA" /etc/kubeedge/config/cloudcore.yaml 2>/dev/null; then
-      echo "  修正cloudStream证书配置为rootCA/server..." | tee -a "$INSTALL_LOG"
-      sed -i 's|tlsStreamCAFile:.*|tlsStreamCAFile: /etc/kubeedge/ca/rootCA.crt|' /etc/kubeedge/config/cloudcore.yaml
-      sed -i 's|tlsStreamCertFile:.*|tlsStreamCertFile: /etc/kubeedge/certs/server.crt|' /etc/kubeedge/config/cloudcore.yaml
-      sed -i 's|tlsStreamPrivateKeyFile:.*|tlsStreamPrivateKeyFile: /etc/kubeedge/certs/server.key|' /etc/kubeedge/config/cloudcore.yaml
-    fi
-    
-    # Ensure cloudHub has https and websocket ports configured
-    if ! grep -q "https:" /etc/kubeedge/config/cloudcore.yaml; then
-      # Add https configuration to cloudHub
-      sed -i '/cloudHub:/a\    https:\n      enable: true\n      port: 10002' /etc/kubeedge/config/cloudcore.yaml
-    fi
-    if ! grep -q "websocket:" /etc/kubeedge/config/cloudcore.yaml; then
-      # Add websocket configuration to cloudHub
-      sed -i '/cloudHub:/a\    websocket:\n      enable: true\n      port: 10000' /etc/kubeedge/config/cloudcore.yaml
-    fi
-    
-    echo "  ✓ dynamicController and cloudStream enabled in cloudcore.yaml" | tee -a "$INSTALL_LOG"
-    echo "  Restarting cloudcore service..." | tee -a "$INSTALL_LOG"
-    systemctl restart cloudcore 2>/dev/null || $KUBECTL -n kubeedge delete pod -l kubeedge=cloudcore >> "$INSTALL_LOG" 2>&1 || true
+    # Wait for CloudCore to be ready again
+    echo "  Waiting for CloudCore to restart..." | tee -a "$INSTALL_LOG"
     sleep 5
+    for i in {1..30}; do
+      if $KUBECTL -n kubeedge get pod -l kubeedge=cloudcore 2>/dev/null | grep -q Running; then
+        echo "  ✓ CloudCore restarted successfully" | tee -a "$INSTALL_LOG"
+        break
+      fi
+      if [ $i -eq 30 ]; then
+        echo "  Warning: CloudCore restart timeout" | tee -a "$INSTALL_LOG"
+      fi
+      sleep 2
+    done
   else
-    echo "  Warning: Could not find CloudCore configuration" | tee -a "$INSTALL_LOG"
+    echo "  Warning: Failed to patch CloudCore ConfigMap" | tee -a "$INSTALL_LOG"
+    echo "  CloudCore will run with default configuration" | tee -a "$INSTALL_LOG"
   fi
+  
+  rm -f /tmp/cloudcore-patch.yaml
 fi
 
 # Generate edge token
@@ -417,17 +384,29 @@ mkdir -p "$TOKEN_DIR"
 CLOUD_IP="$EXTERNAL_IP"
 CLOUD_PORT="10000"
 
-# Wait for tokensecret to be ready
+# Wait for tokensecret to be ready (with CloudCore running check)
 echo "  Waiting for KubeEdge token secret..." | tee -a "$INSTALL_LOG"
-for i in {1..30}; do
+MAX_WAIT=60
+for i in $(seq 1 $MAX_WAIT); do
+  # First ensure CloudCore is Running
+  if ! $KUBECTL -n kubeedge get pod -l kubeedge=cloudcore 2>/dev/null | grep -q Running; then
+    if [ $((i % 10)) -eq 0 ]; then
+      echo "  CloudCore not running yet, waiting... ($i/$MAX_WAIT)" | tee -a "$INSTALL_LOG"
+    fi
+    sleep 2
+    continue
+  fi
+  
+  # Then check for tokensecret
   if $KUBECTL get secret -n kubeedge tokensecret &>/dev/null; then
     echo "  ✓ Token secret is ready" | tee -a "$INSTALL_LOG"
     break
   fi
-  if [ $i -eq 30 ]; then
-    echo "  Warning: Token secret not found, will try keadm" | tee -a "$INSTALL_LOG"
+  
+  if [ $i -eq $MAX_WAIT ]; then
+    echo "  Warning: Token secret not found after ${MAX_WAIT} attempts, will try keadm" | tee -a "$INSTALL_LOG"
   fi
-  sleep 1
+  sleep 2
 done
 
 # Get token directly from K8s secret (正确的完整JWT格式)
