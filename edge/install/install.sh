@@ -432,7 +432,7 @@ mkdir -p /var/log/kubeedge
 # Note: DO NOT pre-create ca/ and certs/ directories
 # EdgeCore will automatically create them and request certificates from CloudCore on first startup
 
-# 创建 EdgeCore systemd service
+# 创建 EdgeCore systemd service (使用官方路径)
 cat > /etc/systemd/system/edgecore.service << 'EDGECORE_SVC_EOF'
 [Unit]
 Description=KubeEdge EdgeCore
@@ -443,7 +443,7 @@ Requires=containerd.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/edgecore --config=/etc/kubeedge/edgecore.yaml
+ExecStart=/usr/local/bin/edgecore --config=/etc/kubeedge/config/edgecore.yaml
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -496,15 +496,15 @@ if /usr/local/bin/keadm join \
   --edgenode-name="${NODE_NAME}" \
   --token="${EDGE_TOKEN}" \
   --kubeedge-version="v${KUBEEDGE_VERSION}" \
-  --remote-runtime-endpoint="unix:///run/containerd/containerd.sock" \
-  --runtimetype="remote" >> "$INSTALL_LOG" 2>&1; then
+  --remote-runtime-endpoint="unix:///run/containerd/containerd.sock" >> "$INSTALL_LOG" 2>&1; then
   
   echo "  ✓ keadm join completed successfully" | tee -a "$INSTALL_LOG"
   echo "  ✓ Certificates downloaded from cloud (via port 10002)" | tee -a "$INSTALL_LOG"
-  echo "  ✓ EdgeCore configuration generated" | tee -a "$INSTALL_LOG"
+  echo "  ✓ EdgeCore configuration generated at /etc/kubeedge/config/edgecore.yaml" | tee -a "$INSTALL_LOG"
 else
-  echo "  Warning: keadm join reported errors, but will continue with customization" | tee -a "$INSTALL_LOG"
+  echo "  Error: keadm join failed" | tee -a "$INSTALL_LOG"
   echo "  Check $INSTALL_LOG for details" | tee -a "$INSTALL_LOG"
+  exit 1
 fi
 
 # Post-join customization: Enable metaServer and adjust MQTT settings
