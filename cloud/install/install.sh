@@ -456,6 +456,69 @@ echo "" | tee -a "$INSTALL_LOG"
 echo "=== Edge Connection Token ===" | tee -a "$INSTALL_LOG"
 echo "Token: $EDGE_TOKEN" | tee -a "$INSTALL_LOG"
 echo "Save this token for edge node installation" | tee -a "$INSTALL_LOG"
+
+# =====================================
+# 6.8. Deploy Metrics Server for Edge Resource Monitoring
+# =====================================
+echo "" | tee -a "$INSTALL_LOG"
+echo "[6.8/7] Deploying Metrics Server for edge resource monitoring..." | tee -a "$INSTALL_LOG"
+
+MANIFESTS_DIR="$SCRIPT_DIR/manifests"
+if [ -f "$MANIFESTS_DIR/metrics-server.yaml" ]; then
+  echo "  部署 Metrics Server..." | tee -a "$INSTALL_LOG"
+  
+  # Load metrics-server image if available
+  if [ -d "$IMAGES_DIR" ]; then
+    METRICS_IMAGE_TAR="$IMAGES_DIR/registry.k8s.io-metrics-server-metrics-server-v0.4.1.tar"
+    if [ -f "$METRICS_IMAGE_TAR" ]; then
+      echo "  导入 Metrics Server 镜像..." | tee -a "$INSTALL_LOG"
+      if /usr/local/bin/k3s ctr images import "$METRICS_IMAGE_TAR" >> "$INSTALL_LOG" 2>&1; then
+        echo "  ✓ Metrics Server 镜像导入成功" | tee -a "$INSTALL_LOG"
+      else
+        echo "  ✗ Metrics Server 镜像导入失败" | tee -a "$INSTALL_LOG"
+      fi
+    else
+      echo "  ⚠ 未找到 Metrics Server 镜像: $METRICS_IMAGE_TAR" | tee -a "$INSTALL_LOG"
+    fi
+  fi
+  
+  # Deploy Metrics Server
+  if $KUBECTL apply -f "$MANIFESTS_DIR/metrics-server.yaml" >> "$INSTALL_LOG" 2>&1; then
+    echo "  ✓ Metrics Server 部署成功" | tee -a "$INSTALL_LOG"
+    
+    # Wait for Metrics Server to be ready
+    echo "  等待 Metrics Server 就绪..." | tee -a "$INSTALL_LOG"
+    if $KUBECTL wait --for=condition=ready pod -l k8s-app=metrics-server -n kube-system --timeout=120s >> "$INSTALL_LOG" 2>&1; then
+      echo "  ✓ Metrics Server 运行正常" | tee -a "$INSTALL_LOG"
+    else
+      echo "  ⚠ Metrics Server 启动超时，可能需要检查配置" | tee -a "$INSTALL_LOG"
+    fi
+  else
+    echo "  ✗ Metrics Server 部署失败" | tee -a "$INSTALL_LOG"
+  fi
+else
+  echo "  ⚠ 未找到 Metrics Server 部署清单，跳过部署" | tee -a "$INSTALL_LOG"
+  echo "  预期位置: $MANIFESTS_DIR/metrics-server.yaml" | tee -a "$INSTALL_LOG"
+fi
+
+# Configure iptables for Metrics Server
+echo "" | tee -a "$INSTALL_LOG"
+echo "[6.9/7] Configuring iptables for Metrics Server..." | tee -a "$INSTALL_LOG"
+if [ -f "$MANIFESTS_DIR/iptables-metrics-setup.sh" ]; then
+  echo "  执行 iptables 配置脚本..." | tee -a "$INSTALL_LOG"
+  chmod +x "$MANIFESTS_DIR/iptables-metrics-setup.sh"
+  if bash "$MANIFESTS_DIR/iptables-metrics-setup.sh" "$EXTERNAL_IP" >> "$INSTALL_LOG" 2>&1; then
+    echo "  ✓ iptables 规则配置成功" | tee -a "$INSTALL_LOG"
+  else
+    echo "  ✗ iptables 规则配置失败" | tee -a "$INSTALL_LOG"
+  fi
+else
+  echo "  ⚠ 未找到 iptables 配置脚本，跳过配置" | tee -a "$INSTALL_LOG"
+  echo "  预期位置: $MANIFESTS_DIR/iptables-metrics-setup.sh" | tee -a "$INSTALL_LOG"
+  echo "  手动配置命令:" | tee -a "$INSTALL_LOG"
+  echo "    sudo iptables -t nat -A OUTPUT -p tcp --dport 10350 -j DNAT --to $EXTERNAL_IP:10003" | tee -a "$INSTALL_LOG"
+fi
+
 echo "" | tee -a "$INSTALL_LOG"
 echo "=== Next Steps ===" | tee -a "$INSTALL_LOG"
 echo "1. Verify k3s cluster:" | tee -a "$INSTALL_LOG"
@@ -464,7 +527,11 @@ echo "" | tee -a "$INSTALL_LOG"
 echo "2. Verify CloudCore:" | tee -a "$INSTALL_LOG"
 echo "   kubectl -n kubeedge get pod" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
-echo "3. To connect an edge node:" | tee -a "$INSTALL_LOG"
+echo "3. Verify Metrics Server:" | tee -a "$INSTALL_LOG"
+echo "   kubectl get pods -n kube-system -l k8s-app=metrics-server" | tee -a "$INSTALL_LOG"
+echo "   kubectl top node  # 在边缘节点加入后可用" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "4. To connect an edge node:" | tee -a "$INSTALL_LOG"
 echo "   - Use cloud IP: $CLOUD_IP" | tee -a "$INSTALL_LOG"
 echo "   - Use token: $EDGE_TOKEN" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"

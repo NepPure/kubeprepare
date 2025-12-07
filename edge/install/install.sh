@@ -623,7 +623,54 @@ if [ -f /etc/kubeedge/config/edgecore.yaml ]; then
     sed -i 's|mqttServerInternal:.*|mqttServerInternal: tcp://127.0.0.1:1884|' /etc/kubeedge/config/edgecore.yaml
   fi
   
-  echo "  ✓ Edge customizations applied (metaServer + CNI + MQTT)" | tee -a "$INSTALL_LOG"
+  # 4. Enable EdgeStream for kubectl logs/exec support
+  echo "  配置 EdgeStream（用于 kubectl logs/exec 支持）..." | tee -a "$INSTALL_LOG"
+  if grep -q "edgeStream:" /etc/kubeedge/config/edgecore.yaml; then
+    # EdgeStream section exists, enable it
+    if grep -A 5 "edgeStream:" /etc/kubeedge/config/edgecore.yaml | grep -q "enable: false"; then
+      # Change enable: false to enable: true
+      sed -i '/edgeStream:/,/enable:/ s/enable: false/enable: true/' /etc/kubeedge/config/edgecore.yaml
+      echo "  ✓ EdgeStream 已启用" | tee -a "$INSTALL_LOG"
+    elif grep -A 5 "edgeStream:" /etc/kubeedge/config/edgecore.yaml | grep -q "enable: true"; then
+      echo "  ✓ EdgeStream 已经启用" | tee -a "$INSTALL_LOG"
+    else
+      # No enable field, add it
+      sed -i '/edgeStream:/a\    enable: true' /etc/kubeedge/config/edgecore.yaml
+      echo "  ✓ EdgeStream enable 字段已添加" | tee -a "$INSTALL_LOG"
+    fi
+    
+    # Ensure handshakeTimeout is set (default 30s)
+    if ! grep -A 10 "edgeStream:" /etc/kubeedge/config/edgecore.yaml | grep -q "handshakeTimeout:"; then
+      sed -i '/edgeStream:/a\    handshakeTimeout: 30' /etc/kubeedge/config/edgecore.yaml
+      echo "  ✓ EdgeStream handshakeTimeout 设置为 30s" | tee -a "$INSTALL_LOG"
+    fi
+    
+    # Ensure server address is set (should point to cloudcore stream port 10004)
+    if ! grep -A 10 "edgeStream:" /etc/kubeedge/config/edgecore.yaml | grep -q "server:"; then
+      # Extract cloud IP from CLOUD_ADDRESS (format: IP:PORT)
+      CLOUD_IP="${CLOUD_ADDRESS%%:*}"
+      sed -i "/edgeStream:/a\    server: ${CLOUD_IP}:10004" /etc/kubeedge/config/edgecore.yaml
+      echo "  ✓ EdgeStream server 设置为 ${CLOUD_IP}:10004" | tee -a "$INSTALL_LOG"
+    fi
+  else
+    # EdgeStream section doesn't exist, add it
+    echo "  添加 EdgeStream 配置块..." | tee -a "$INSTALL_LOG"
+    CLOUD_IP="${CLOUD_ADDRESS%%:*}"
+    cat >> /etc/kubeedge/config/edgecore.yaml << EOF_EDGESTREAM
+  edgeStream:
+    enable: true
+    handshakeTimeout: 30
+    readDeadline: 15
+    server: ${CLOUD_IP}:10004
+    tlsTunnelCAFile: /etc/kubeedge/ca/rootCA.crt
+    tlsTunnelCertFile: /etc/kubeedge/certs/server.crt
+    tlsTunnelPrivateKeyFile: /etc/kubeedge/certs/server.key
+    writeDeadline: 15
+EOF_EDGESTREAM
+    echo "  ✓ EdgeStream 配置块已添加" | tee -a "$INSTALL_LOG"
+  fi
+  
+  echo "  ✓ Edge customizations applied (metaServer + CNI + MQTT + EdgeStream)" | tee -a "$INSTALL_LOG"
 fi
 
 echo "✓ Edge node configuration completed (official keadm workflow)" | tee -a "$INSTALL_LOG"

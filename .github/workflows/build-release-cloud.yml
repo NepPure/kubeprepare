@@ -131,8 +131,13 @@ jobs:
             "docker.io/kubeedge/edgemesh-agent:${EDGEMESH_VERSION}"
           )
           
+          # Metrics Server 镜像（用于边缘节点资源监控）
+          METRICS_IMAGES=(
+            "registry.k8s.io/metrics-server/metrics-server:v0.4.1"
+          )
+          
           # 合并所有镜像
-          ALL_IMAGES=("${K3S_IMAGES[@]}" "${KUBEEDGE_IMAGES[@]}" "${EDGEMESH_IMAGES[@]}")
+          ALL_IMAGES=("${K3S_IMAGES[@]}" "${KUBEEDGE_IMAGES[@]}" "${EDGEMESH_IMAGES[@]}" "${METRICS_IMAGES[@]}")
           
           for image in "${ALL_IMAGES[@]}"; do
             echo "  拉取镜像: $image"

@@ -10,8 +10,12 @@ kubeprepare/
 │   ├── build/
 │   │   └── build.sh               # 构建云端离线包 (支持 amd64/arm64)
 │   ├── install/
-│   │   ├── install.sh             # 云端一键安装脚本
-│   │   └── README.md              # 云端详细安装指南
+│   │   ├── install.sh             # 云端一键安装脚本（已增强：自动部署 Metrics Server）
+│   │   ├── README.md              # 云端详细安装指南
+│   │   └── manifests/             # 【新增】日志与监控部署清单
+│   │       ├── metrics-server.yaml           # Metrics Server 部署配置
+│   │       ├── iptables-metrics-setup.sh     # iptables 规则配置脚本
+│   │       └── verify-logs-metrics.sh        # 功能验证脚本
 │   └── release/                   # 生成的离线包存放位置
 │       └── (自动生成)
 │
@@ -19,7 +23,7 @@ kubeprepare/
 │   ├── build/
 │   │   └── build.sh               # 构建边缘端离线包 (支持 amd64/arm64)
 │   ├── install/
-│   │   ├── install.sh             # 边缘端一键安装脚本
+│   │   ├── install.sh             # 边缘端一键安装脚本（已增强：自动启用 EdgeStream）
 │   │   └── README.md              # 边缘端详细安装指南
 │   └── release/                   # 生成的离线包存放位置
 │       └── (自动生成)
@@ -52,6 +56,11 @@ bash cloud/build/build.sh arm64    # 构建 arm64 版本
 ### cloud/install/install.sh
 云端一键安装脚本，自动安装 k3s 和 KubeEdge 云端，并生成边缘节点连接 token。
 
+**【已增强】**新增功能：
+- ✅ 自动部署 Metrics Server（用于资源监控）
+- ✅ 自动配置 iptables 规则（用于 kubectl top）
+- ✅ 自动启用 CloudStream（用于 kubectl logs/exec）
+
 **用法**:
 ```bash
 sudo bash cloud/install/install.sh \
@@ -67,7 +76,9 @@ sudo bash cloud/install/install.sh \
 
 **输出**:
 - Kubernetes 集群已部署
-- KubeEdge CloudCore 已安装
+- KubeEdge CloudCore 已安装（CloudStream 已启用）
+- Metrics Server 已部署并配置
+- iptables NAT 规则已配置
 - 边缘节点接入 token 已生成
 
 ### edge/build/build.sh
@@ -85,6 +96,11 @@ bash edge/build/build.sh arm64     # 构建 arm64 版本
 
 ### edge/install/install.sh
 边缘端一键安装脚本，自动安装容器运行时和 KubeEdge 边缘端，并连接到云端。
+
+**【已增强】**新增功能：
+- ✅ 自动启用 EdgeStream（用于 kubectl logs/exec）
+- ✅ 自动配置 EdgeStream 服务器地址
+- ✅ 自动配置 EdgeStream 超时参数
 
 **用法**:
 ```bash
@@ -245,10 +261,52 @@ A: 在安装时使用 `--port` 参数指定，或编辑 `/etc/kubeedge/edgecore.
 **Q: 边缘节点无法连接怎么办？**
 A: 检查网络连通性、防火墙规则、token 是否正确，查看日志文件排查问题。
 
+## 新增功能文档
+
+### 日志采集与资源监控
+
+项目已集成完整的边缘日志采集和资源监控功能：
+
+- **kubectl logs**: 从云端查看边缘 Pod 日志
+- **kubectl exec**: 在边缘 Pod 中执行命令
+- **kubectl top node**: 查看边缘节点资源使用情况
+- **kubectl top pod**: 查看边缘 Pod 资源使用情况
+
+#### 新增文件
+
+```
+cloud/install/manifests/
+├── metrics-server.yaml              # Metrics Server 部署清单（RBAC + Deployment + Service）
+├── iptables-metrics-setup.sh        # iptables 规则配置脚本（自动转发 10350 → 10003）
+└── verify-logs-metrics.sh           # 功能验证脚本（自动检查所有组件）
+```
+
+#### 功能验证
+
+```bash
+# 自动验证所有功能
+cd /data/kubeedge-cloud-xxx
+sudo bash manifests/verify-logs-metrics.sh
+```
+
+验证项目：
+- ✓ CloudCore 和 CloudStream 状态
+- ✓ Metrics Server 部署状态
+- ✓ iptables 规则配置
+- ✓ kubectl logs/exec 功能测试
+- ✓ kubectl top 功能测试
+
+#### 详细文档
+
+- [快速部署指南](./QUICK_DEPLOY_LOGS_METRICS.md) - 使用说明和故障排查
+- [完整方案文档](./LOG_METRICS_OFFLINE_DEPLOYMENT.md) - 架构设计和实现细节
+
 ## 相关文档
 
 - [云端安装指南](./cloud/install/README.md)
 - [边缘端安装指南](./edge/install/README.md)
+- [日志与监控快速部署](./QUICK_DEPLOY_LOGS_METRICS.md) 【新增】
+- [日志与监控完整方案](./LOG_METRICS_OFFLINE_DEPLOYMENT.md) 【新增】
 - [KubeEdge 官方文档](https://kubeedge.io/docs/)
 - [k3s 文档](https://docs.k3s.io/)
 

@@ -3,8 +3,9 @@
 ## 简介
 
 这是一个完整的 KubeEdge 1.22 离线安装解决方案，包括：
-- **云端**：K3s + KubeEdge CloudCore + EdgeMesh（支持 amd64/arm64）
+- **云端**：K3s + KubeEdge CloudCore + EdgeMesh + Metrics Server（支持 amd64/arm64）
 - **边缘端**：containerd + runc + KubeEdge EdgeCore（支持 amd64/arm64）
+- **日志与监控**：kubectl logs/exec + kubectl top（完全离线支持）
 
 支持在**完全离线环境**下快速部署 KubeEdge 边缘计算基础设施。
 
@@ -20,8 +21,20 @@
 - 包含 EdgeMesh Agent 镜像 (v1.17.0)
 - 包含 EdgeMesh 离线 Helm Chart
 - 包含 Istio CRDs (3个：destinationrule, gateway, virtualservice)
+- 【新增】包含 Metrics Server 镜像 (v0.4.1)
 - 自动启用 CloudCore dynamicController（支持 metaServer）
+- 【新增】自动启用 CloudStream（支持 kubectl logs/exec）
 - 安装前自动预导入，无需联网
+
+✅ **边缘日志采集与资源监控**
+- **kubectl logs** - 从云端查看边缘 Pod 日志
+- **kubectl exec** - 在边缘 Pod 中执行命令
+- **kubectl top node** - 查看边缘节点资源使用情况
+- **kubectl top pod** - 查看边缘 Pod 资源使用情况
+- 完全自动化配置，无需手动操作
+- CloudStream + EdgeStream 自动启用
+- Metrics Server 自动部署和配置
+- iptables 规则自动配置
 
 ## 快速开始
 
@@ -101,6 +114,8 @@ kubeprepare/
 │   ├── EDGECORE_CONFIG_BEST_PRACTICES.md # EdgeCore 配置最佳实践
 │   ├── K3S_NETWORK_CONFIG.md       # K3s 网络配置详解
 │   ├── IOT_MQTT_INTEGRATION.md     # IoT MQTT 集成指南
+│   ├── QUICK_DEPLOY_LOGS_METRICS.md # 【新增】日志与监控快速部署指南
+│   ├── LOG_METRICS_OFFLINE_DEPLOYMENT.md # 【新增】日志与监控完整方案文档
 │   ├── PROJECT_STRUCTURE.md        # 项目结构说明
 │   ├── CI_CD_ARCHITECTURE.md       # CI/CD 架构设计
 │   ├── BUILD_FLOW_SUMMARY.md       # 构建流程总结
@@ -117,10 +132,20 @@ kubeprepare/
 ## 功能特性
 
 ✅ **完全离线支持** - 所有二进制文件、配置和容器镜像已完整打包
-  - 包含 13 个容器镜像（8个 K3s + 4个 KubeEdge + 1个 EdgeMesh）
+  - 包含 14 个容器镜像（8个 K3s + 4个 KubeEdge + 1个 EdgeMesh + 1个 Metrics Server）
   - 包含 EdgeMesh 离线 Helm Chart (v1.17.0)
   - 包含 Istio CRDs (destinationrule, gateway, virtualservice)
+  - 包含 Metrics Server 部署清单和配置脚本
   - 支持纯离线环境部署，无需任何网络连接
+
+✅ **边缘日志采集与资源监控** - 【新增功能】
+  - **kubectl logs** - 从云端实时查看边缘 Pod 日志
+  - **kubectl exec** - 在边缘 Pod 中执行命令（调试利器）
+  - **kubectl top node** - 监控边缘节点 CPU/内存使用情况
+  - **kubectl top pod** - 监控边缘 Pod 资源消耗
+  - CloudStream + EdgeStream 自动配置和启用
+  - Metrics Server 自动部署（含 iptables NAT 规则）
+  - 完全自动化，零手动配置
 
 ✅ **EdgeMesh 最佳实践** - 遵循官方部署指南
   - CloudCore 自动启用 dynamicController（支持 metaServer）
@@ -182,6 +207,8 @@ EdgeMesh 提供边缘服务发现和流量代理：
 - [K3s 网络配置详解](./docs/K3S_NETWORK_CONFIG.md) - K3s 网络架构和配置说明
 
 ### 功能扩展
+- [日志与监控快速部署](./docs/QUICK_DEPLOY_LOGS_METRICS.md) - 【新增】kubectl logs/exec/top 功能使用指南
+- [日志与监控完整方案](./docs/LOG_METRICS_OFFLINE_DEPLOYMENT.md) - 【新增】离线环境日志采集与资源监控完整方案
 - [IoT MQTT 集成指南](./docs/IOT_MQTT_INTEGRATION.md) - 边缘端 MQTT Broker 部署
 - [SSH 密钥配置](./docs/SSH_KEY_SETUP.md) - SSH 免密访问配置
 
@@ -221,6 +248,38 @@ sudo bash cleanup.sh
 - edgecore 和 containerd 服务
 - 相关二进制文件
 - 配置文件和数据目录
+
+### 日志采集与资源监控验证
+
+**自动验证（推荐）:**
+```bash
+cd /data/kubeedge-cloud-xxx
+sudo bash manifests/verify-logs-metrics.sh
+```
+
+验证项目：
+- ✓ CloudCore 和 CloudStream 状态
+- ✓ Metrics Server 部署状态
+- ✓ iptables 规则配置
+- ✓ kubectl logs/exec 功能
+- ✓ kubectl top 功能
+
+**使用示例:**
+```bash
+# 查看边缘 Pod 日志
+kubectl logs <pod-name> -n <namespace>
+
+# 在边缘 Pod 中执行命令
+kubectl exec -it <pod-name> -n <namespace> -- /bin/bash
+
+# 查看边缘节点资源使用情况
+kubectl top node
+
+# 查看边缘 Pod 资源使用情况
+kubectl top pod -A
+```
+
+详细功能说明参考 [日志与监控快速部署指南](./docs/QUICK_DEPLOY_LOGS_METRICS.md)
 
 ### EdgeMesh 部署
 
