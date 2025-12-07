@@ -58,6 +58,8 @@ jobs:
 
       - name: 构建边缘端离线包
         run: |
+          set -euo pipefail  # 任何命令失败都立即终止流程
+          
           BUILD_DIR="build-${{ matrix.arch }}"
           mkdir -p "$BUILD_DIR/edge"
           cd "$BUILD_DIR/edge"
@@ -93,25 +95,20 @@ jobs:
           echo "[3/6] 下载 containerd 和 runc..."
           CONTAINERD_URL="https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-${{ matrix.arch }}.tar.gz"
           if ! wget -q -O containerd.tar.gz "$CONTAINERD_URL"; then
-            echo "警告：无法下载 containerd v${CONTAINERD_VERSION}，尝试备用版本"
+            echo "警告：无法下载 containerd v${CONTAINERD_VERSION}，尝试备用版本 v1.6.0"
             CONTAINERD_URL="https://github.com/containerd/containerd/releases/download/v1.6.0/containerd-1.6.0-linux-${{ matrix.arch }}.tar.gz"
-            wget -q -O containerd.tar.gz "$CONTAINERD_URL" || echo "警告：containerd 下载失败"
+            wget -q -O containerd.tar.gz "$CONTAINERD_URL" || (echo "错误：containerd 下载失败，离线包将无法运行容器" && exit 1)
           fi
           
-          if [ -f "containerd.tar.gz" ]; then
-            tar -xzf containerd.tar.gz
-            rm containerd.tar.gz
-            echo "✓ containerd 下载完成"
-          fi
+          tar -xzf containerd.tar.gz || (echo "错误：containerd 解压失败" && exit 1)
+          rm containerd.tar.gz
+          echo "✓ containerd 下载完成"
           
           # 下载 runc
           RUNC_URL="https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/runc.${{ matrix.arch }}"
-          if wget -q -O runc "$RUNC_URL"; then
-            chmod +x runc
-            echo "✓ runc 下载完成"
-          else
-            echo "警告：无法下载 runc"
-          fi
+          wget -q -O runc "$RUNC_URL" || (echo "错误：runc 下载失败，containerd 将无法运行容器" && exit 1)
+          chmod +x runc
+          echo "✓ runc 下载完成"
           
           # 4. 下载 CNI 插件 (v1.22.0 要求，避免 Node NotReady)
           echo "[4/6] 下载 CNI 插件..."
@@ -119,14 +116,11 @@ jobs:
           CNI_URL="https://github.com/containernetworking/plugins/releases/download/${CNI_VERSION}/cni-plugins-linux-${{ matrix.arch }}-${CNI_VERSION}.tgz"
           
           mkdir -p cni-bin
-          if wget -q -O cni-plugins.tgz "$CNI_URL"; then
-            tar -xzf cni-plugins.tgz -C cni-bin
-            rm cni-plugins.tgz
-            echo "✓ CNI 插件下载完成 (版本: ${CNI_VERSION})"
-            ls -lh cni-bin/ | head -10
-          else
-            echo "警告：CNI 插件下载失败，边缘节点可能显示 NotReady"
-          fi
+          wget -q -O cni-plugins.tgz "$CNI_URL" || (echo "错误：CNI 插件下载失败，边缘节点将显示 NotReady" && exit 1)
+          tar -xzf cni-plugins.tgz -C cni-bin || (echo "错误：CNI 插件解压失败" && exit 1)
+          rm cni-plugins.tgz
+          echo "✓ CNI 插件下载完成 (版本: ${CNI_VERSION})"
+          ls -lh cni-bin/ | head -10
           
           # 4.5. 下载 KubeEdge、EdgeMesh 和 Mosquitto MQTT 镜像
           echo "[4.5/6] 下载 KubeEdge、EdgeMesh 和 Mosquitto MQTT 镜像..."
@@ -136,50 +130,38 @@ jobs:
           INSTALLATION_PKG_IMAGE="docker.io/kubeedge/installation-package:v${KUBEEDGE_VERSION}"
           
           echo "  拉取 KubeEdge installation-package 镜像: $INSTALLATION_PKG_IMAGE"
-          if docker pull --platform ${{ matrix.dockerfile_platform }} "$INSTALLATION_PKG_IMAGE"; then
-            docker save "$INSTALLATION_PKG_IMAGE" -o "images/kubeedge-installation-package-v${KUBEEDGE_VERSION}.tar"
-            echo "✓ KubeEdge installation-package 镜像已保存 (keadm join 离线必需)"
-            ls -lh images/kubeedge-installation-package-v${KUBEEDGE_VERSION}.tar
-          else
-            echo "警告：installation-package 镜像下载失败，keadm join 将无法离线执行"
-          fi
+          docker pull --platform ${{ matrix.dockerfile_platform }} "$INSTALLATION_PKG_IMAGE" || (echo "错误：installation-package 镜像下载失败，keadm join 将无法离线执行" && exit 1)
+          docker save "$INSTALLATION_PKG_IMAGE" -o "images/kubeedge-installation-package-v${KUBEEDGE_VERSION}.tar" || (echo "错误：镜像保存失败" && exit 1)
+          echo "✓ KubeEdge installation-package 镜像已保存 (keadm join 离线必需)"
+          ls -lh images/kubeedge-installation-package-v${KUBEEDGE_VERSION}.tar
           
           # KubeEdge pause 镜像 (containerd sandbox 依赖)
           PAUSE_IMAGE="docker.io/kubeedge/pause:3.6"
           
           echo "  拉取 KubeEdge pause 镜像: $PAUSE_IMAGE"
-          if docker pull --platform ${{ matrix.dockerfile_platform }} "$PAUSE_IMAGE"; then
-            docker save "$PAUSE_IMAGE" -o "images/kubeedge-pause-3.6.tar"
-            echo "✓ KubeEdge pause 镜像已保存 (containerd sandbox 必需)"
-            ls -lh images/kubeedge-pause-3.6.tar
-          else
-            echo "警告：pause 镜像下载失败，keadm join 可能失败"
-          fi
+          docker pull --platform ${{ matrix.dockerfile_platform }} "$PAUSE_IMAGE" || (echo "错误：pause 镜像下载失败，containerd sandbox 将无法工作" && exit 1)
+          docker save "$PAUSE_IMAGE" -o "images/kubeedge-pause-3.6.tar" || (echo "错误：镜像保存失败" && exit 1)
+          echo "✓ KubeEdge pause 镜像已保存 (containerd sandbox 必需)"
+          ls -lh images/kubeedge-pause-3.6.tar
           
           # EdgeMesh Agent 镜像 (边缘服务网格)
           EDGEMESH_VERSION="v1.17.0"
           EDGEMESH_IMAGE="docker.io/kubeedge/edgemesh-agent:${EDGEMESH_VERSION}"
           
           echo "  拉取 EdgeMesh 镜像: $EDGEMESH_IMAGE"
-          if docker pull --platform ${{ matrix.dockerfile_platform }} "$EDGEMESH_IMAGE"; then
-            docker save "$EDGEMESH_IMAGE" -o "images/docker.io-kubeedge-edgemesh-agent-${EDGEMESH_VERSION}.tar"
-            echo "✓ EdgeMesh Agent 镜像已保存 (用于边缘服务网格)"
-            ls -lh images/docker.io-kubeedge-edgemesh-agent-${EDGEMESH_VERSION}.tar
-          else
-            echo "警告：EdgeMesh 镜像下载失败，边缘节点将无法加入服务网格"
-          fi
+          docker pull --platform ${{ matrix.dockerfile_platform }} "$EDGEMESH_IMAGE" || (echo "错误：EdgeMesh 镜像下载失败，边缘节点将无法加入服务网格" && exit 1)
+          docker save "$EDGEMESH_IMAGE" -o "images/docker.io-kubeedge-edgemesh-agent-${EDGEMESH_VERSION}.tar" || (echo "错误：镜像保存失败" && exit 1)
+          echo "✓ EdgeMesh Agent 镜像已保存 (用于边缘服务网格)"
+          ls -lh images/docker.io-kubeedge-edgemesh-agent-${EDGEMESH_VERSION}.tar
           
           # Mosquitto MQTT 镜像 (供云端 DaemonSet 调度使用，版本与 CloudCore Helm Chart 一致)
           MQTT_IMAGE="eclipse-mosquitto:1.6.15"
           
           echo "  拉取 MQTT 镜像: $MQTT_IMAGE"
-          if docker pull --platform ${{ matrix.dockerfile_platform }} "$MQTT_IMAGE"; then
-            docker save "$MQTT_IMAGE" -o "images/eclipse-mosquitto-1.6.15.tar"
-            echo "✓ Mosquitto MQTT 镜像已保存 (版本 1.6.15，与 CloudCore Helm Chart 一致)"
-            ls -lh images/eclipse-mosquitto-1.6.15.tar
-          else
-            echo "警告：Mosquitto 镜像下载失败，云端 DaemonSet 将无法调度 MQTT Pod"
-          fi
+          docker pull --platform ${{ matrix.dockerfile_platform }} "$MQTT_IMAGE" || (echo "错误：Mosquitto 镜像下载失败，云端 DaemonSet 将无法调度 MQTT Pod" && exit 1)
+          docker save "$MQTT_IMAGE" -o "images/eclipse-mosquitto-1.6.15.tar" || (echo "错误：镜像保存失败" && exit 1)
+          echo "✓ Mosquitto MQTT 镜像已保存 (版本 1.6.15，与 CloudCore Helm Chart 一致)"
+          ls -lh images/eclipse-mosquitto-1.6.15.tar
           
           # 5. 创建安装元数据
           echo "[5/6] 创建安装元数据..."

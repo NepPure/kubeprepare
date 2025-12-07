@@ -58,6 +58,8 @@ jobs:
 
       - name: 构建云端离线包
         run: |
+          set -euo pipefail  # 任何命令失败都立即终止流程
+          
           BUILD_DIR="build-${{ matrix.arch }}"
           mkdir -p "$BUILD_DIR/cloud"
           cd "$BUILD_DIR/cloud"
@@ -134,11 +136,11 @@ jobs:
           
           for image in "${ALL_IMAGES[@]}"; do
             echo "  拉取镜像: $image"
-            docker pull --platform ${{ matrix.dockerfile_platform }} "$image" || echo "警告：无法拉取 $image"
+            docker pull --platform ${{ matrix.dockerfile_platform }} "$image" || (echo "错误：无法拉取镜像 $image" && exit 1)
             
             # 保存镜像为tar文件
             filename=$(echo "$image" | sed 's/[\/:]/-/g')
-            docker save "$image" -o "images/${filename}.tar" 2>/dev/null || echo "警告：无法保存 $image"
+            docker save "$image" -o "images/${filename}.tar" || (echo "错误：无法保存镜像 $image" && exit 1)
           done
           echo "✓ 镜像处理完成"
           
@@ -147,15 +149,12 @@ jobs:
           HELM_VERSION="v3.19.2"
           HELM_TAR="helm-${HELM_VERSION}-linux-${{ matrix.arch }}.tar.gz"
           HELM_URL="https://get.helm.sh/${HELM_TAR}"
-          if wget -q -O helm.tar.gz "$HELM_URL"; then
-            tar -xzf helm.tar.gz
-            mv linux-${{ matrix.arch }}/helm ./helm
-            chmod +x ./helm
-            rm -rf linux-${{ matrix.arch }} helm.tar.gz
-            echo "✓ Helm 二进制文件下载完成 (${HELM_VERSION})"
-          else
-            echo "警告：无法下载 Helm，EdgeMesh 安装将需要手动操作"
-          fi
+          wget -q -O helm.tar.gz "$HELM_URL" || (echo "错误：无法下载 Helm，EdgeMesh 安装将无法执行" && exit 1)
+          tar -xzf helm.tar.gz || (echo "错误：Helm 解压失败" && exit 1)
+          mv linux-${{ matrix.arch }}/helm ./helm
+          chmod +x ./helm
+          rm -rf linux-${{ matrix.arch }} helm.tar.gz
+          echo "✓ Helm 二进制文件下载完成 (${HELM_VERSION})"
           
           # 5. 下载 EdgeMesh Helm Chart
           echo "[4.5/6] 下载 EdgeMesh Helm Chart..."
@@ -163,11 +162,8 @@ jobs:
           
           # 下载 EdgeMesh Helm chart
           EDGEMESH_CHART_URL="https://raw.githubusercontent.com/kubeedge/edgemesh/main/build/helm/edgemesh.tgz"
-          if wget -q -O helm-charts/edgemesh.tgz "$EDGEMESH_CHART_URL"; then
-            echo "✓ EdgeMesh Helm chart 下载完成"
-          else
-            echo "警告：无法下载 EdgeMesh Helm chart，将跳过"
-          fi
+          wget -q -O helm-charts/edgemesh.tgz "$EDGEMESH_CHART_URL" || (echo "错误：无法下载 EdgeMesh Helm chart，EdgeMesh 将无法安装" && exit 1)
+          echo "✓ EdgeMesh Helm chart 下载完成"
           
           # 5.5. 下载 Istio CRDs (EdgeMesh 依赖)
           echo "[4.6/6] 下载 Istio CRDs (EdgeMesh 依赖)..."
@@ -176,11 +172,8 @@ jobs:
           ISTIO_CRD_BASE_URL="https://raw.githubusercontent.com/kubeedge/edgemesh/main/build/crds/istio"
           for crd in crd-destinationrule crd-gateway crd-virtualservice; do
             echo "  下载 ${crd}.yaml..."
-            if wget -q -O "crds/istio/${crd}.yaml" "${ISTIO_CRD_BASE_URL}/${crd}.yaml"; then
-              echo "  ✓ ${crd}.yaml 下载完成"
-            else
-              echo "  警告：无法下载 ${crd}.yaml"
-            fi
+            wget -q -O "crds/istio/${crd}.yaml" "${ISTIO_CRD_BASE_URL}/${crd}.yaml" || (echo "  错误：无法下载 ${crd}.yaml，EdgeMesh 将无法工作" && exit 1)
+            echo "  ✓ ${crd}.yaml 下载完成"
           done
           echo "✓ Istio CRDs 下载完成"
           
