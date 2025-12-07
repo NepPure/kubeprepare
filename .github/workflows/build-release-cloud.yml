@@ -272,11 +272,6 @@ jobs:
           
           echo "✓ 包已创建: $PACKAGE_NAME"
           echo "包大小: $(du -h "$PACKAGE_NAME" | cut -f1)"
-          echo ""
-          echo "包内容（前20个文件）："
-          tar -tzf "$PACKAGE_NAME" | head -20 || true
-          echo "..."
-          echo "总文件数: $(tar -tzf "$PACKAGE_NAME" | wc -l)"
 
       - name: 生成校验和并准备发布文件
         run: |
