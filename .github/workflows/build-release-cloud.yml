@@ -279,12 +279,15 @@ jobs:
         run: |
           # 为云端包生成校验和
           cd "${BUILD_DIR}/cloud"
-          sha256sum *.tar.gz > checksums-cloud-${{ matrix.arch }}.txt
+          KUBEEDGE_VERSION="1.22.0"
+          K3S_VERSION="v1.32.1+k3s1"
+          PACKAGE_NAME="kubeedge-cloud-${KUBEEDGE_VERSION}-k3s-${K3S_VERSION}-${{ matrix.arch }}.tar.gz"
+          sha256sum "$PACKAGE_NAME" > "${PACKAGE_NAME}.sha256sum.txt"
           
           # 创建发布目录并收集所有文件
           mkdir -p "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}"
-          cp *.tar.gz "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/"
-          cp checksums-cloud-${{ matrix.arch }}.txt "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/checksums-${{ matrix.arch }}.txt"
+          cp "$PACKAGE_NAME" "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/"
+          cp "${PACKAGE_NAME}.sha256sum.txt" "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/"
           
           echo "=== 准备发布的文件 (${{ matrix.arch }}) ==="
           ls -lh "${GITHUB_WORKSPACE}/release-${{ matrix.arch }}/"
