@@ -260,5 +260,25 @@ helm install edgemesh ./helm-charts/edgemesh.tgz \
 - **边缘计算**: KubeEdge (CloudCore + EdgeCore)
 - **服务网格**: EdgeMesh (边缘服务发现和流量代理)
 - **网络模式**: 边缘节点 host 网络 + EdgeMesh DNS (169.254.96.16)
-- **IoT 协议**: 支持 MQTT (Mosquitto)
+- **IoT 协议**: MQTT Broker (eclipse-mosquitto:2.0, 边缘本地运行)
+
+## 核心文档
+
+### 部署与配置
+- [快速部署手册](docs/QUICK_DEPLOY.md) - 完整离线部署流程
+- [SSH 密钥配置](docs/SSH_KEY_SETUP.md) - 云边通信密钥设置
+- [EdgeMesh 部署指南](docs/EDGEMESH_DEPLOYMENT.md) - 服务网格部署
+
+### IoT 与 MQTT
+- **[MQTT 版本决策](docs/MQTT_VERSION_DECISION.md)** - MQTT 版本选择和统一方案 ⭐
+- [IoT MQTT 部署策略](docs/IOT_MQTT_DEPLOYMENT_STRATEGY.md) - 本地 vs 云端部署对比
+
+### 最佳实践
+- [CNI 与 EdgeMesh 最佳实践](docs/CNI_EDGEMESH_BEST_PRACTICES.md)
+- [EdgeCore 配置最佳实践](docs/EDGECORE_CONFIG_BEST_PRACTICES.md)
+- [K3s 网络配置说明](docs/K3S_NETWORK_CONFIG.md)
+
+### 问题解决
+- [离线镜像修复指南](docs/OFFLINE_IMAGE_FIX.md) - 镜像加载和容器运行问题
+- [测试检查清单](docs/TESTING_CHECKLIST.md) - 安装后验证步骤
 
