@@ -518,10 +518,10 @@ fi
 # Run keadm join to generate config and download certificates from cloud
 # Note: This will automatically download certs via cloudHub.https (port 10002)
 echo "  Joining edge node using keadm..." | tee -a "$INSTALL_LOG"
-echo "  Running: keadm join --cloudcore-ipport=${CLOUD_IP}:${CLOUD_PORT} --edgenode-name=${NODE_NAME} --token=<token> --kubeedge-version=v${KUBEEDGE_VERSION}" | tee -a "$INSTALL_LOG"
+echo "  Running: keadm join --cloudcore-ipport=${CLOUD_IP}:10002 --edgenode-name=${NODE_NAME} --token=<token> --kubeedge-version=v${KUBEEDGE_VERSION}" | tee -a "$INSTALL_LOG"
 
 if /usr/local/bin/keadm join \
-  --cloudcore-ipport="${CLOUD_IP}:${CLOUD_PORT}" \
+  --cloudcore-ipport="${CLOUD_IP}:10002" \
   --edgenode-name="${NODE_NAME}" \
   --token="${EDGE_TOKEN}" \
   --kubeedge-version="v${KUBEEDGE_VERSION}" \
