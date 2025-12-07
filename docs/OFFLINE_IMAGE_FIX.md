@@ -123,6 +123,7 @@ sudo keadm join \
 
 - 仍尝试拉取 installation-package：确认镜像已在 `k8s.io` 命名空间并标签匹配；手动 `ctr import` 后复验
 - Sandbox 创建失败：确认 `pause:3.6` 已导入且 `config.toml` 指向正确；重启 containerd
+- **cgroup driver 冲突**（重要）：keadm join v1.22.0 使用 cgroupfs 路径格式，与 `SystemdCgroup = true` 不兼容，导致 runc 报错 `expected cgroupsPath to be of format "slice:prefix:name"`。**解决方案**：containerd config.toml 中设置 `SystemdCgroup = false`（边缘场景推荐 cgroupfs）
 - Node NotReady：确认 CNI plugins 已安装并生成 node 专属 CIDR；检查 EdgeCore `networkPluginName: cni`
 - DNS 解析异常：确认 `clusterDNS` 使用 `169.254.96.16`（EdgeMesh DNS），避免指向云 CoreDNS
 
