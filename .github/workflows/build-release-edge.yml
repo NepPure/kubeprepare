@@ -211,7 +211,6 @@ jobs:
       - name: 生成校验和并准备发布文件
         run: |
           # 为边缘端包生成校验和（使用环境变量中的版本号）
-          cd "${BUILD_DIR}/edge"
           PACKAGE_NAME="kubeedge-edge-${KUBEEDGE_VERSION}-${{ matrix.arch }}.tar.gz"
           sha256sum "$PACKAGE_NAME" > "${PACKAGE_NAME}.sha256sum.txt"
           

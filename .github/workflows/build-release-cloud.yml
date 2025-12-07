@@ -276,7 +276,6 @@ jobs:
       - name: 生成校验和并准备发布文件
         run: |
           # 为云端包生成校验和（使用环境变量中的版本号）
-          cd "${BUILD_DIR}/cloud"
           PACKAGE_NAME="kubeedge-cloud-${KUBEEDGE_VERSION}-k3s-${K3S_VERSION}-${{ matrix.arch }}.tar.gz"
           sha256sum "$PACKAGE_NAME" > "${PACKAGE_NAME}.sha256sum.txt"
           
