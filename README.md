@@ -135,7 +135,8 @@ kubeprepare/
   - 包含 14 个容器镜像（8个 K3s + 4个 KubeEdge + 1个 EdgeMesh + 1个 Metrics Server）
   - 包含 EdgeMesh 离线 Helm Chart (v1.17.0)
   - 包含 Istio CRDs (destinationrule, gateway, virtualservice)
-  - 包含 Metrics Server 部署清单和配置脚本
+  - 包含 Metrics Server v0.8.0 部署清单和配置脚本
+  - K3s 内置 metrics-server 已自动禁用（避免冲突）
   - 支持纯离线环境部署，无需任何网络连接
 
 ✅ **边缘日志采集与资源监控** - 【新增功能】
@@ -144,7 +145,9 @@ kubeprepare/
   - **kubectl top node** - 监控边缘节点 CPU/内存使用情况
   - **kubectl top pod** - 监控边缘 Pod 资源消耗
   - CloudStream + EdgeStream 自动配置和启用
-  - Metrics Server 自动部署（含 iptables NAT 规则）
+  - Metrics Server v0.8.0 自动部署（与 K3s 版本对齐）
+  - K3s 内置 metrics-server 自动禁用（避免冲突）
+  - iptables NAT 规则自动配置
   - 完全自动化，零手动配置
 
 ✅ **EdgeMesh 最佳实践** - 遵循官方部署指南
@@ -309,6 +312,7 @@ helm install edgemesh ./helm-charts/edgemesh.tgz \
 - **KubeEdge**: v1.22.0
 - **K3s**: v1.34.2+k3s1
 - **EdgeMesh**: v1.17.0
+- **Metrics Server**: v0.8.0 (与 K3s 内置版本对齐)
 - **Istio CRDs**: v1.22.0 (destinationrule, gateway, virtualservice)
 - **支持架构**: amd64, arm64
 

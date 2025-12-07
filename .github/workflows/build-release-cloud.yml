@@ -132,8 +132,9 @@ jobs:
           )
           
           # Metrics Server 镜像（用于边缘节点资源监控）
+          # 使用 v0.8.0 与 K3s 内置版本对齐（但我们会禁用 K3s 内置版本）
           METRICS_IMAGES=(
-            "registry.k8s.io/metrics-server/metrics-server:v0.4.1"
+            "registry.k8s.io/metrics-server/metrics-server:v0.8.0"
           )
           
           # 合并所有镜像
@@ -237,6 +238,13 @@ jobs:
           if [ -f "$CLEANUP_SCRIPT" ]; then
             cp "$CLEANUP_SCRIPT" "$TEMP_PKG_DIR/"
             echo "✓ 已包含 cleanup.sh 清理脚本"
+          fi
+          
+          # 复制 manifests 目录（包含 Metrics Server 部署清单和验证脚本）
+          MANIFESTS_DIR="$INSTALL_DIR/manifests"
+          if [ -d "$MANIFESTS_DIR" ]; then
+            cp -r "$MANIFESTS_DIR" "$TEMP_PKG_DIR/"
+            echo "✓ 已包含 manifests 目录（Metrics Server 部署清单、iptables 配置脚本和验证脚本）"
           fi
           
           # 创建 README

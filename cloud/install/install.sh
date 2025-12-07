@@ -147,6 +147,7 @@ ExecStart=/usr/local/bin/k3s server \\
   --cluster-cidr=10.42.0.0/16 \\
   --service-cidr=10.43.0.0/16 \\
   --cluster-dns=10.43.0.10 \\
+  --disable metrics-server \\
   --kube-apiserver-arg=bind-address=0.0.0.0 \\
   --kube-apiserver-arg=advertise-address=$EXTERNAL_IP \\
   --kube-controller-manager-arg=bind-address=0.0.0.0 \\
@@ -465,11 +466,19 @@ echo "[6.8/7] Deploying Metrics Server for edge resource monitoring..." | tee -a
 
 MANIFESTS_DIR="$SCRIPT_DIR/manifests"
 if [ -f "$MANIFESTS_DIR/metrics-server.yaml" ]; then
-  echo "  部署 Metrics Server..." | tee -a "$INSTALL_LOG"
+  # 检测 K3s 内置 metrics-server 是否已禁用
+  if $KUBECTL get deployment metrics-server -n kube-system &>/dev/null; then
+    echo "  ⚠ 检测到 K3s 内置 metrics-server 仍在运行" | tee -a "$INSTALL_LOG"
+    echo "  正在删除 K3s 内置版本以避免冲突..." | tee -a "$INSTALL_LOG"
+    $KUBECTL delete deployment metrics-server -n kube-system --ignore-not-found=true >> "$INSTALL_LOG" 2>&1 || true
+    sleep 3
+  fi
+  
+  echo "  部署 Metrics Server (v0.8.0 - 支持 EdgeStream 隧道)..." | tee -a "$INSTALL_LOG"
   
   # Load metrics-server image if available
   if [ -d "$IMAGES_DIR" ]; then
-    METRICS_IMAGE_TAR="$IMAGES_DIR/registry.k8s.io-metrics-server-metrics-server-v0.4.1.tar"
+    METRICS_IMAGE_TAR="$IMAGES_DIR/registry.k8s.io-metrics-server-metrics-server-v0.8.0.tar"
     if [ -f "$METRICS_IMAGE_TAR" ]; then
       echo "  导入 Metrics Server 镜像..." | tee -a "$INSTALL_LOG"
       if /usr/local/bin/k3s ctr images import "$METRICS_IMAGE_TAR" >> "$INSTALL_LOG" 2>&1; then
@@ -527,11 +536,15 @@ echo "" | tee -a "$INSTALL_LOG"
 echo "2. Verify CloudCore:" | tee -a "$INSTALL_LOG"
 echo "   kubectl -n kubeedge get pod" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
-echo "3. Verify Metrics Server:" | tee -a "$INSTALL_LOG"
+echo "3. Verify Metrics Server (v0.8.0):" | tee -a "$INSTALL_LOG"
 echo "   kubectl get pods -n kube-system -l k8s-app=metrics-server" | tee -a "$INSTALL_LOG"
 echo "   kubectl top node  # 在边缘节点加入后可用" | tee -a "$INSTALL_LOG"
+echo "   注意: K3s 内置 metrics-server 已被禁用，使用支持 EdgeStream 的自定义版本" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
-echo "4. To connect an edge node:" | tee -a "$INSTALL_LOG"
+echo "4. 验证日志与监控功能:" | tee -a "$INSTALL_LOG"
+echo "   sudo bash manifests/verify-logs-metrics.sh  # 自动检查所有功能" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "5. To connect an edge node:" | tee -a "$INSTALL_LOG"
 echo "   - Use cloud IP: $CLOUD_IP" | tee -a "$INSTALL_LOG"
 echo "   - Use token: $EDGE_TOKEN" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
