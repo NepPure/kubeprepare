@@ -67,12 +67,6 @@ jobs:
           echo "=== 构建云端离线包 (架构: ${{ matrix.arch }}) ==="
           echo "版本信息: K3s ${K3S_VERSION}, KubeEdge ${KUBEEDGE_VERSION}"
           
-          # 1. 下载 k3s 二进制文件 (架构: ${{ matrix.arch }}) ==="
-          
-          # 定义版本
-          K3S_VERSION="v1.34.2+k3s1"
-          KUBEEDGE_VERSION="1.22.0"
-          
           # 1. 下载 k3s 二进制文件
           echo "[1/6] 下载 k3s 二进制文件..."
           if [ "${{ matrix.arch }}" = "amd64" ]; then
