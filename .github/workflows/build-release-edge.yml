@@ -60,7 +60,7 @@ jobs:
           echo "KUBEEDGE_VERSION=1.22.0" >> $GITHUB_ENV
           echo "CONTAINERD_VERSION=1.7.29" >> $GITHUB_ENV
           echo "RUNC_VERSION=1.4.0" >> $GITHUB_ENV
-          echo "CNI_VERSION=1.6.1" >> $GITHUB_ENV
+          echo "CNI_VERSION=1.8.0" >> $GITHUB_ENV
           echo "EDGEMESH_VERSION=v1.17.0" >> $GITHUB_ENV
           echo "MOSQUITTO_VERSION=2.0" >> $GITHUB_ENV
 
@@ -116,10 +116,17 @@ jobs:
           
           # 4. 下载 CNI 插件 (v1.22.0 要求，避免 Node NotReady)（使用环境变量中的版本号）
           echo "[4/6] 下载 CNI 插件..."
+          echo "调试信息: CNI_VERSION=${CNI_VERSION}"
           CNI_URL="https://github.com/containernetworking/plugins/releases/download/v${CNI_VERSION}/cni-plugins-linux-${{ matrix.arch }}-v${CNI_VERSION}.tgz"
+          echo "下载 URL: $CNI_URL"
           
           mkdir -p cni-bin
-          wget -q -O cni-plugins.tgz "$CNI_URL" || (echo "错误：CNI 插件下载失败，边缘节点将显示 NotReady" && exit 1)
+          if ! wget -q -O cni-plugins.tgz "$CNI_URL"; then
+            echo "错误：CNI 插件下载失败 (URL: $CNI_URL)"
+            echo "尝试显示详细错误信息..."
+            wget -O cni-plugins.tgz "$CNI_URL" || true
+            exit 1
+          fi
           tar -xzf cni-plugins.tgz -C cni-bin || (echo "错误：CNI 插件解压失败" && exit 1)
           rm cni-plugins.tgz
           echo "✓ CNI 插件下载完成 (版本: ${CNI_VERSION})"
