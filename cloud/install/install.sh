@@ -147,7 +147,6 @@ ExecStart=/usr/local/bin/k3s server \\
   --cluster-cidr=10.42.0.0/16 \\
   --service-cidr=10.43.0.0/16 \\
   --cluster-dns=10.43.0.10 \\
-  --disable metrics-server \\
   --kube-apiserver-arg=bind-address=0.0.0.0 \\
   --kube-apiserver-arg=advertise-address=$EXTERNAL_IP \\
   --kube-controller-manager-arg=bind-address=0.0.0.0 \\
@@ -459,73 +458,110 @@ echo "Token: $EDGE_TOKEN" | tee -a "$INSTALL_LOG"
 echo "Save this token for edge node installation" | tee -a "$INSTALL_LOG"
 
 # =====================================
-# 6.8. Deploy Metrics Server for Edge Resource Monitoring
+# 6.8. Patch K3s Built-in Metrics Server for KubeEdge
 # =====================================
 echo "" | tee -a "$INSTALL_LOG"
-echo "[6.8/7] Deploying Metrics Server for edge resource monitoring..." | tee -a "$INSTALL_LOG"
+echo "[6.8/7] Patching K3s built-in Metrics Server for KubeEdge..." | tee -a "$INSTALL_LOG"
 
-MANIFESTS_DIR="$SCRIPT_DIR/manifests"
-if [ -f "$MANIFESTS_DIR/metrics-server.yaml" ]; then
-  # 检测 K3s 内置 metrics-server 是否已禁用
-  if $KUBECTL get deployment metrics-server -n kube-system &>/dev/null; then
-    echo "  ⚠ 检测到 K3s 内置 metrics-server 仍在运行" | tee -a "$INSTALL_LOG"
-    echo "  正在删除 K3s 内置版本以避免冲突..." | tee -a "$INSTALL_LOG"
-    $KUBECTL delete deployment metrics-server -n kube-system --ignore-not-found=true >> "$INSTALL_LOG" 2>&1 || true
-    sleep 3
-  fi
+# 等待 K3s 内置的 metrics-server 部署就绪
+echo "  Waiting for built-in metrics-server to be ready..." | tee -a "$INSTALL_LOG"
+if ! $KUBECTL wait --for=condition=available deployment/metrics-server -n kube-system --timeout=180s >> "$INSTALL_LOG" 2>&1; then
+  echo "  ✗ K3s built-in metrics-server is not available after 180s. Aborting patch." | tee -a "$INSTALL_LOG"
+  $KUBECTL get pods -n kube-system >> "$INSTALL_LOG" 2>&1
+else
+  echo "  ✓ K3s built-in metrics-server is available." | tee -a "$INSTALL_LOG"
   
-  echo "  部署 Metrics Server (v0.8.0 - 支持 EdgeStream 隧道)..." | tee -a "$INSTALL_LOG"
+  # 获取内置 metrics-server 的镜像版本
+  BUILTIN_METRICS_IMAGE=$($KUBECTL get deployment metrics-server -n kube-system -o jsonpath='{.spec.template.spec.containers[0].image}')
+  echo "  Found built-in metrics-server image: $BUILTIN_METRICS_IMAGE" | tee -a "$INSTALL_LOG"
+
+  # 为 KubeEdge 修改 metrics-server 部署（参考 KubeEdge 官方文档）
+  # - 添加 --kubelet-insecure-tls 以跳过 TLS 验证
+  # - 添加 --kubelet-preferred-address-types 指定地址类型优先级
+  # - 添加 --kubelet-use-node-status-port 使用节点状态端口
+  # - 添加 nodeAffinity 确保只在 master 节点运行
+  # - 添加 tolerations 容忍 master 节点污点
+  # - 启用 hostNetwork 模式
   
-  # Load metrics-server image if available
-  if [ -d "$IMAGES_DIR" ]; then
-    METRICS_IMAGE_TAR="$IMAGES_DIR/registry.k8s.io-metrics-server-metrics-server-v0.8.0.tar"
-    if [ -f "$METRICS_IMAGE_TAR" ]; then
-      echo "  导入 Metrics Server 镜像..." | tee -a "$INSTALL_LOG"
-      if /usr/local/bin/k3s ctr images import "$METRICS_IMAGE_TAR" >> "$INSTALL_LOG" 2>&1; then
-        echo "  ✓ Metrics Server 镜像导入成功" | tee -a "$INSTALL_LOG"
-      else
-        echo "  ✗ Metrics Server 镜像导入失败" | tee -a "$INSTALL_LOG"
-      fi
-    else
-      echo "  ⚠ 未找到 Metrics Server 镜像: $METRICS_IMAGE_TAR" | tee -a "$INSTALL_LOG"
-    fi
-  fi
-  
-  # Deploy Metrics Server
-  if $KUBECTL apply -f "$MANIFESTS_DIR/metrics-server.yaml" >> "$INSTALL_LOG" 2>&1; then
-    echo "  ✓ Metrics Server 部署成功" | tee -a "$INSTALL_LOG"
+  PATCH_DATA=$(cat <<EOF
+{
+  "spec": {
+    "template": {
+      "spec": {
+        "hostNetwork": true,
+        "containers": [
+          {
+            "name": "metrics-server",
+            "args": [
+              "--cert-dir=/tmp",
+              "--secure-port=4443",
+              "--kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname",
+              "--kubelet-use-node-status-port",
+              "--metric-resolution=30s",
+              "--kubelet-insecure-tls"
+            ]
+          }
+        ],
+        "affinity": {
+          "nodeAffinity": {
+            "requiredDuringSchedulingIgnoredDuringExecution": {
+              "nodeSelectorTerms": [
+                {
+                  "matchExpressions": [
+                    {
+                      "key": "node-role.kubernetes.io/master",
+                      "operator": "Exists"
+                    }
+                  ]
+                },
+                {
+                  "matchExpressions": [
+                    {
+                      "key": "node-role.kubernetes.io/control-plane",
+                      "operator": "Exists"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        "tolerations": [
+          {
+            "key": "node-role.kubernetes.io/master",
+            "operator": "Exists",
+            "effect": "NoSchedule"
+          },
+          {
+            "key": "node-role.kubernetes.io/control-plane",
+            "operator": "Exists",
+            "effect": "NoSchedule"
+          }
+        ]
+      }
+    }
+  }
+}
+EOF
+)
+
+  echo "  Applying patch to metrics-server deployment..." | tee -a "$INSTALL_LOG"
+  if echo "$PATCH_DATA" | $KUBECTL patch deployment metrics-server -n kube-system --patch-file /dev/stdin >> "$INSTALL_LOG" 2>&1; then
+    echo "  ✓ Successfully patched metrics-server." | tee -a "$INSTALL_LOG"
     
-    # Wait for Metrics Server to be ready
-    echo "  等待 Metrics Server 就绪..." | tee -a "$INSTALL_LOG"
+    # 等待 Pod 重启并就绪
+    echo "  Waiting for patched metrics-server to be ready..." | tee -a "$INSTALL_LOG"
+    sleep 5 # 等待旧 Pod 终止
     if $KUBECTL wait --for=condition=ready pod -l k8s-app=metrics-server -n kube-system --timeout=120s >> "$INSTALL_LOG" 2>&1; then
-      echo "  ✓ Metrics Server 运行正常" | tee -a "$INSTALL_LOG"
+      echo "  ✓ Patched metrics-server is running correctly." | tee -a "$INSTALL_LOG"
     else
-      echo "  ⚠ Metrics Server 启动超时，可能需要检查配置" | tee -a "$INSTALL_LOG"
+      echo "  ✗ Patched metrics-server failed to become ready." | tee -a "$INSTALL_LOG"
+      $KUBECTL get pods -n kube-system -l k8s-app=metrics-server >> "$INSTALL_LOG" 2>&1
+      $KUBECTL logs -n kube-system -l k8s-app=metrics-server --tail=50 >> "$INSTALL_LOG" 2>&1
     fi
   else
-    echo "  ✗ Metrics Server 部署失败" | tee -a "$INSTALL_LOG"
+    echo "  ✗ Failed to patch metrics-server." | tee -a "$INSTALL_LOG"
   fi
-else
-  echo "  ⚠ 未找到 Metrics Server 部署清单，跳过部署" | tee -a "$INSTALL_LOG"
-  echo "  预期位置: $MANIFESTS_DIR/metrics-server.yaml" | tee -a "$INSTALL_LOG"
-fi
-
-# Configure iptables for Metrics Server
-echo "" | tee -a "$INSTALL_LOG"
-echo "[6.9/7] Configuring iptables for Metrics Server..." | tee -a "$INSTALL_LOG"
-if [ -f "$MANIFESTS_DIR/iptables-metrics-setup.sh" ]; then
-  echo "  执行 iptables 配置脚本..." | tee -a "$INSTALL_LOG"
-  chmod +x "$MANIFESTS_DIR/iptables-metrics-setup.sh"
-  if bash "$MANIFESTS_DIR/iptables-metrics-setup.sh" "$EXTERNAL_IP" >> "$INSTALL_LOG" 2>&1; then
-    echo "  ✓ iptables 规则配置成功" | tee -a "$INSTALL_LOG"
-  else
-    echo "  ✗ iptables 规则配置失败" | tee -a "$INSTALL_LOG"
-  fi
-else
-  echo "  ⚠ 未找到 iptables 配置脚本，跳过配置" | tee -a "$INSTALL_LOG"
-  echo "  预期位置: $MANIFESTS_DIR/iptables-metrics-setup.sh" | tee -a "$INSTALL_LOG"
-  echo "  手动配置命令:" | tee -a "$INSTALL_LOG"
-  echo "    sudo iptables -t nat -A OUTPUT -p tcp --dport 10350 -j DNAT --to $EXTERNAL_IP:10003" | tee -a "$INSTALL_LOG"
 fi
 
 echo "" | tee -a "$INSTALL_LOG"
@@ -536,10 +572,9 @@ echo "" | tee -a "$INSTALL_LOG"
 echo "2. Verify CloudCore:" | tee -a "$INSTALL_LOG"
 echo "   kubectl -n kubeedge get pod" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
-echo "3. Verify Metrics Server (v0.8.0):" | tee -a "$INSTALL_LOG"
-echo "   kubectl get pods -n kube-system -l k8s-app=metrics-server" | tee -a "$INSTALL_LOG"
+echo "3. Verify Metrics Server (K3s built-in, patched):" | tee -a "$INSTALL_LOG"
+echo "   kubectl get deployment -n kube-system metrics-server -o yaml" | tee -a "$INSTALL_LOG"
 echo "   kubectl top node  # 在边缘节点加入后可用" | tee -a "$INSTALL_LOG"
-echo "   注意: K3s 内置 metrics-server 已被禁用，使用支持 EdgeStream 的自定义版本" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 echo "4. 验证日志与监控功能:" | tee -a "$INSTALL_LOG"
 echo "   sudo bash manifests/verify-logs-metrics.sh  # 自动检查所有功能" | tee -a "$INSTALL_LOG"

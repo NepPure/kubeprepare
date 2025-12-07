@@ -127,14 +127,11 @@ jobs:
             "docker.io/kubeedge/edgemesh-agent:${EDGEMESH_VERSION}"
           )
           
-          # Metrics Server 镜像（用于边缘节点资源监控）
-          # 使用 v0.8.0 与 K3s 内置版本对齐（但我们会禁用 K3s 内置版本）
-          METRICS_IMAGES=(
-            "registry.k8s.io/metrics-server/metrics-server:v0.8.0"
-          )
+          # 注意：Metrics Server 使用 K3s 内置版本 (docker.io/rancher/mirrored-metrics-server:v0.8.0)
+          # 安装脚本会自动 patch 内置版本以支持 KubeEdge
           
           # 合并所有镜像
-          ALL_IMAGES=("${K3S_IMAGES[@]}" "${KUBEEDGE_IMAGES[@]}" "${EDGEMESH_IMAGES[@]}" "${METRICS_IMAGES[@]}")
+          ALL_IMAGES=("${K3S_IMAGES[@]}" "${KUBEEDGE_IMAGES[@]}" "${EDGEMESH_IMAGES[@]}")
           
           for image in "${ALL_IMAGES[@]}"; do
             echo "  拉取镜像: $image"
