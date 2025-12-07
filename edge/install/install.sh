@@ -282,10 +282,64 @@ else
   exit 1
 fi
 
-# Note: CNI is NOT required for edge nodes using host networking
-# EdgeMesh will be used for service mesh capabilities
-echo "[4/6] CNI not required (using host networking)" | tee -a "$INSTALL_LOG"
-echo "  ✓ EdgeMesh 将用于边缘服务网格功能" | tee -a "$INSTALL_LOG"
+# Install CNI plugins (required for Node Ready status in v1.22.0)
+echo "[4/6] Installing CNI plugins..." | tee -a "$INSTALL_LOG"
+CNI_BIN_DIR="/opt/cni/bin"
+CNI_CONF_DIR="/etc/cni/net.d"
+
+mkdir -p "$CNI_BIN_DIR" "$CNI_CONF_DIR"
+
+# Copy CNI binaries from offline package
+CNI_SOURCE=$(find "$SCRIPT_DIR" -type d -name "cni-bin" 2>/dev/null | head -1)
+if [ -n "$CNI_SOURCE" ] && [ -d "$CNI_SOURCE" ]; then
+  cp "$CNI_SOURCE"/* "$CNI_BIN_DIR/" 2>/dev/null || true
+  chmod +x "$CNI_BIN_DIR"/*
+  echo "✓ CNI plugins installed to $CNI_BIN_DIR" | tee -a "$INSTALL_LOG"
+  
+  # Generate CNI configuration with node-specific CIDR to avoid conflicts
+  # Use node name hash to generate unique subnet (10.244.X.0/24)
+  NODE_HASH=$(echo -n "$NODE_NAME" | md5sum | cut -c1-2)
+  SUBNET_OCTET=$((16#$NODE_HASH % 254 + 1))
+  POD_CIDR="10.244.${SUBNET_OCTET}.0/24"
+  
+  echo "  Generating CNI config with Pod CIDR: $POD_CIDR" | tee -a "$INSTALL_LOG"
+  
+  cat > "$CNI_CONF_DIR/10-kubeedge-bridge.conflist" << EOF_CNI
+{
+  "cniVersion": "1.0.0",
+  "name": "kubeedge-cni",
+  "plugins": [
+    {
+      "type": "bridge",
+      "bridge": "cni0",
+      "isDefaultGateway": true,
+      "forceAddress": false,
+      "ipMasq": true,
+      "hairpinMode": true,
+      "ipam": {
+        "type": "host-local",
+        "subnet": "${POD_CIDR}",
+        "routes": [
+          { "dst": "0.0.0.0/0" }
+        ]
+      }
+    },
+    {
+      "type": "portmap",
+      "capabilities": {
+        "portMappings": true
+      }
+    }
+  ]
+}
+EOF_CNI
+  
+  echo "✓ CNI configuration created: $CNI_CONF_DIR/10-kubeedge-bridge.conflist" | tee -a "$INSTALL_LOG"
+  echo "  Pod CIDR: $POD_CIDR (based on node name: $NODE_NAME)" | tee -a "$INSTALL_LOG"
+else
+  echo "Warning: CNI binaries not found in offline package" | tee -a "$INSTALL_LOG"
+  echo "  Edge node may show NotReady status" | tee -a "$INSTALL_LOG"
+fi
 
 
 # Deploy Mosquitto MQTT Broker for IoT devices

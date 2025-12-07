@@ -113,9 +113,20 @@ jobs:
             echo "警告：无法下载 runc"
           fi
           
-          # 4. CNI 不需要 (边缘节点使用 host 网络)
-          echo "[4/6] 跳过 CNI 插件 (使用 host 网络模式)..."
-          echo "✓ EdgeMesh 将用于边缘服务网格"
+          # 4. 下载 CNI 插件 (v1.22.0 要求，避免 Node NotReady)
+          echo "[4/6] 下载 CNI 插件..."
+          CNI_VERSION="v1.5.1"
+          CNI_URL="https://github.com/containernetworking/plugins/releases/download/${CNI_VERSION}/cni-plugins-linux-${{ matrix.arch }}-${CNI_VERSION}.tgz"
+          
+          mkdir -p cni-bin
+          if wget -q -O cni-plugins.tgz "$CNI_URL"; then
+            tar -xzf cni-plugins.tgz -C cni-bin
+            rm cni-plugins.tgz
+            echo "✓ CNI 插件下载完成 (版本: ${CNI_VERSION})"
+            ls -lh cni-bin/ | head -10
+          else
+            echo "警告：CNI 插件下载失败，边缘节点可能显示 NotReady"
+          fi
           
           # 4.5. 下载 KubeEdge、EdgeMesh 和 Mosquitto MQTT 镜像
           echo "[4.5/6] 下载 KubeEdge、EdgeMesh 和 Mosquitto MQTT 镜像..."
@@ -192,6 +203,7 @@ jobs:
             keadm \
             bin \
             runc \
+            cni-bin \
             images \
             meta \
             -C "$(dirname "$INSTALL_SCRIPT")" install.sh \
