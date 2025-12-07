@@ -590,14 +590,14 @@ else
   exit 1
 fi
 
-# Post-join customization: Enable metaServer and adjust MQTT settings
-echo "  Applying edge customizations (metaServer, MQTT)..." | tee -a "$INSTALL_LOG"
+# Post-join customization: Enable metaServer, configure CNI, and adjust MQTT settings
+echo "  Applying edge customizations (metaServer, CNI, MQTT)..." | tee -a "$INSTALL_LOG"
 
 if [ -f /etc/kubeedge/config/edgecore.yaml ]; then
   # Backup original config
   cp /etc/kubeedge/config/edgecore.yaml /etc/kubeedge/config/edgecore.yaml.keadm-original
   
-  # Enable metaServer (required for EdgeMesh)
+  # 1. Enable metaServer (required for EdgeMesh)
   if ! grep -q "metaServer:" /etc/kubeedge/config/edgecore.yaml; then
     # Add metaServer section to metaManager
     sed -i '/metaManager:/a\    metaServer:\n      enable: true\n      server: 127.0.0.1:10550' /etc/kubeedge/config/edgecore.yaml
@@ -606,13 +606,35 @@ if [ -f /etc/kubeedge/config/edgecore.yaml ]; then
     sed -i '/metaServer:/,/enable:/ s/enable: false/enable: true/' /etc/kubeedge/config/edgecore.yaml
   fi
   
-  # Configure MQTT for IoT devices (eventBus)
+  # 2. Configure CNI and DNS for edged module
+  if grep -q "edged:" /etc/kubeedge/config/edgecore.yaml; then
+    # Ensure networkPluginName is set to cni
+    if ! grep -q "networkPluginName:" /etc/kubeedge/config/edgecore.yaml; then
+      sed -i '/edged:/a\    networkPluginName: cni' /etc/kubeedge/config/edgecore.yaml
+      echo "  ✓ CNI network plugin configured in edged" | tee -a "$INSTALL_LOG"
+    fi
+    
+    # Set clusterDNS to EdgeMesh DNS (169.254.96.16 - EdgeMesh bridgeDeviceIP)
+    # EdgeMesh will handle DNS resolution for edge Pods
+    if ! grep -q "clusterDNS:" /etc/kubeedge/config/edgecore.yaml; then
+      sed -i '/edged:/a\    clusterDNS:\n    - 169.254.96.16' /etc/kubeedge/config/edgecore.yaml
+      echo "  ✓ ClusterDNS configured: 169.254.96.16 (EdgeMesh DNS)" | tee -a "$INSTALL_LOG"
+    fi
+    
+    # Set clusterDomain
+    if ! grep -q "clusterDomain:" /etc/kubeedge/config/edgecore.yaml; then
+      sed -i '/edged:/a\    clusterDomain: cluster.local' /etc/kubeedge/config/edgecore.yaml
+      echo "  ✓ ClusterDomain configured: cluster.local" | tee -a "$INSTALL_LOG"
+    fi
+  fi
+  
+  # 3. Configure MQTT for IoT devices (eventBus)
   if grep -q "mqttServerExternal:" /etc/kubeedge/config/edgecore.yaml; then
     sed -i 's|mqttServerExternal:.*|mqttServerExternal: tcp://127.0.0.1:1883|' /etc/kubeedge/config/edgecore.yaml
     sed -i 's|mqttServerInternal:.*|mqttServerInternal: tcp://127.0.0.1:1884|' /etc/kubeedge/config/edgecore.yaml
   fi
   
-  echo "  ✓ Edge customizations applied" | tee -a "$INSTALL_LOG"
+  echo "  ✓ Edge customizations applied (metaServer + CNI + MQTT)" | tee -a "$INSTALL_LOG"
 fi
 
 echo "✓ Edge node configuration completed (official keadm workflow)" | tee -a "$INSTALL_LOG"
