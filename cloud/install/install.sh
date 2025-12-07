@@ -566,28 +566,28 @@ echo "=== Configuring svclb to avoid edge nodes ===" | tee -a "$INSTALL_LOG"
 
 # 配置所有 svclb DaemonSet，防止调度到边缘节点
 # K3s 的 Service Load Balancer (svclb) 不应该在边缘节点运行
+# 使用 nodeAffinity 而不是 nodeSelector，因为 nodeSelector 只能匹配标签存在且值相等的情况
 SVCLB_COUNT=$($KUBECTL get daemonset -n kube-system -l svccontroller.k3s.cattle.io/svcname --no-headers 2>/dev/null | wc -l)
 
 if [ "$SVCLB_COUNT" -gt 0 ]; then
-  echo "  Found $SVCLB_COUNT svclb DaemonSet(s), adding nodeSelector to exclude edge nodes..." | tee -a "$INSTALL_LOG"
+  echo "  Found $SVCLB_COUNT svclb DaemonSet(s), adding nodeAffinity to exclude edge nodes..." | tee -a "$INSTALL_LOG"
   
-  # 为所有 svclb DaemonSet 添加 nodeSelector
+  # 为所有 svclb DaemonSet 添加 nodeAffinity (排除带有 node-role.kubernetes.io/edge 标签的节点)
   $KUBECTL get daemonset -n kube-system -l svccontroller.k3s.cattle.io/svcname -o name | while read -r ds; do
     DS_NAME=$(echo "$ds" | cut -d'/' -f2)
-    if $KUBECTL patch "$ds" -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/nodeSelector","value":{"node-role.kubernetes.io/edge":"false"}}]' >> "$INSTALL_LOG" 2>&1; then
-      echo "  ✓ Patched $DS_NAME to exclude edge nodes." | tee -a "$INSTALL_LOG"
+    
+    # 使用 nodeAffinity 的 DoesNotExist 操作符排除边缘节点
+    AFFINITY_PATCH='{"spec":{"template":{"spec":{"affinity":{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"node-role.kubernetes.io/edge","operator":"DoesNotExist"}]}]}}}}}}}'
+    
+    if $KUBECTL patch "$ds" -n kube-system --type=strategic -p="$AFFINITY_PATCH" >> "$INSTALL_LOG" 2>&1; then
+      echo "  ✓ Patched $DS_NAME with nodeAffinity (DoesNotExist edge label)." | tee -a "$INSTALL_LOG"
     else
-      # 如果 nodeSelector 已存在，尝试使用 strategic merge
-      if $KUBECTL patch "$ds" -n kube-system --type=strategic -p='{"spec":{"template":{"spec":{"nodeSelector":{"node-role.kubernetes.io/edge":"false"}}}}}' >> "$INSTALL_LOG" 2>&1; then
-        echo "  ✓ Updated $DS_NAME nodeSelector." | tee -a "$INSTALL_LOG"
-      else
-        echo "  ⚠ Failed to patch $DS_NAME." | tee -a "$INSTALL_LOG"
-      fi
+      echo "  ⚠ Failed to patch $DS_NAME." | tee -a "$INSTALL_LOG"
     fi
   done
   
   echo "  ✓ svclb DaemonSets configured to avoid edge nodes." | tee -a "$INSTALL_LOG"
-  echo "  提示: svclb 已配置 nodeSelector (node-role.kubernetes.io/edge: false)" | tee -a "$INSTALL_LOG"
+  echo "  提示: svclb 已配置 nodeAffinity (排除 node-role.kubernetes.io/edge 标签的节点)" | tee -a "$INSTALL_LOG"
 else
   echo "  No svclb DaemonSet found, skipping." | tee -a "$INSTALL_LOG"
 fi
