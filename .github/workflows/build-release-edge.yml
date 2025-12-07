@@ -68,10 +68,6 @@ jobs:
         run: |
           set -euo pipefail  # 任何命令失败都立即终止流程
           
-          BUILD_DIR="build-${{ matrix.arch }}"
-          mkdir -p "$BUILD_DIR/edge"
-          cd "$BUILD_DIR/edge"
-          
           echo "=== 构建边缘端离线包 (架构: ${{ matrix.arch }}) ==="
           echo "版本信息: KubeEdge ${KUBEEDGE_VERSION}, containerd ${CONTAINERD_VERSION}, runc ${RUNC_VERSION}"
           
