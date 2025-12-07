@@ -264,8 +264,42 @@ CONTAINERD_SVC_EOF
     echo "Warning: containerd may not be running properly" | tee -a "$INSTALL_LOG"
     systemctl status containerd --no-pager | tee -a "$INSTALL_LOG"
   fi
+  
+  # Pre-load pause image for containerd sandbox (required for keadm join)
+  echo "Pre-loading pause image for containerd..." | tee -a "$INSTALL_LOG"
+  IMAGES_DIR=$(find "$SCRIPT_DIR" -type d -name "images" 2>/dev/null | head -1)
+  if [ -n "$IMAGES_DIR" ] && [ -d "$IMAGES_DIR" ]; then
+    PAUSE_IMAGE=$(find "$IMAGES_DIR" -name "*pause*.tar" -type f 2>/dev/null | head -1)
+    if [ -n "$PAUSE_IMAGE" ] && [ -f "$PAUSE_IMAGE" ]; then
+      echo "  Loading: $(basename "$PAUSE_IMAGE")" | tee -a "$INSTALL_LOG"
+      if "$CTR_BIN" -n k8s.io images import "$PAUSE_IMAGE" >> "$INSTALL_LOG" 2>&1; then
+        echo "  ✓ pause image loaded successfully" | tee -a "$INSTALL_LOG"
+        # Verify image
+        "$CTR_BIN" -n k8s.io images ls | grep pause >> "$INSTALL_LOG" 2>&1 || true
+      else
+        echo "  Warning: Failed to load pause image" | tee -a "$INSTALL_LOG"
+      fi
+    else
+      echo "  Warning: pause image not found in offline package" | tee -a "$INSTALL_LOG"
+    fi
+  fi
 else
   echo "✓ Skipped containerd installation (using system version)" | tee -a "$INSTALL_LOG"
+  
+  # Still need to pre-load pause image for system containerd
+  echo "Pre-loading pause image for system containerd..." | tee -a "$INSTALL_LOG"
+  IMAGES_DIR=$(find "$SCRIPT_DIR" -type d -name "images" 2>/dev/null | head -1)
+  if [ -n "$IMAGES_DIR" ] && [ -d "$IMAGES_DIR" ]; then
+    PAUSE_IMAGE=$(find "$IMAGES_DIR" -name "*pause*.tar" -type f 2>/dev/null | head -1)
+    if [ -n "$PAUSE_IMAGE" ] && [ -f "$PAUSE_IMAGE" ]; then
+      echo "  Loading: $(basename "$PAUSE_IMAGE")" | tee -a "$INSTALL_LOG"
+      if "$CTR_BIN" -n k8s.io images import "$PAUSE_IMAGE" >> "$INSTALL_LOG" 2>&1; then
+        echo "  ✓ pause image loaded successfully" | tee -a "$INSTALL_LOG"
+      else
+        echo "  Warning: Failed to load pause image" | tee -a "$INSTALL_LOG"
+      fi
+    fi
+  fi
 fi
 
 echo "✓ Prerequisites checked" | tee -a "$INSTALL_LOG"

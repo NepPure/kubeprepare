@@ -144,6 +144,18 @@ jobs:
             echo "警告：installation-package 镜像下载失败，keadm join 将无法离线执行"
           fi
           
+          # KubeEdge pause 镜像 (containerd sandbox 依赖)
+          PAUSE_IMAGE="docker.io/kubeedge/pause:3.6"
+          
+          echo "  拉取 KubeEdge pause 镜像: $PAUSE_IMAGE"
+          if docker pull --platform ${{ matrix.dockerfile_platform }} "$PAUSE_IMAGE"; then
+            docker save "$PAUSE_IMAGE" -o "images/kubeedge-pause-3.6.tar"
+            echo "✓ KubeEdge pause 镜像已保存 (containerd sandbox 必需)"
+            ls -lh images/kubeedge-pause-3.6.tar
+          else
+            echo "警告：pause 镜像下载失败，keadm join 可能失败"
+          fi
+          
           # EdgeMesh Agent 镜像 (边缘服务网格)
           EDGEMESH_VERSION="v1.17.0"
           EDGEMESH_IMAGE="docker.io/kubeedge/edgemesh-agent:${EDGEMESH_VERSION}"
