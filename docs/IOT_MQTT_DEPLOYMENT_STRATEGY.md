@@ -6,13 +6,68 @@
 1. **边缘本地运行**（systemd 管理的容器）
 2. **云端统一调度**（Kubernetes DaemonSet/Deployment）
 
+**当前采用方案**：✅ **云端 DaemonSet 统一调度**（CloudCore Helm Chart 默认方式）
+
 本文档说明两种方案的适用场景和最佳实践。
+
+---
+
+## 当前部署配置
+
+### ✅ 已实施：云端 DaemonSet 调度 MQTT
+
+**镜像版本**：`eclipse-mosquitto:1.6.15`（KubeEdge CloudCore Helm Chart 默认版本）
+
+**部署方式**：
+```yaml
+# CloudCore Helm Chart 自动创建
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: edge-eclipse-mosquitto
+  namespace: kubeedge
+spec:
+  selector:
+    matchLabels:
+      k8s-app: eclipse-mosquitto
+  template:
+    spec:
+      hostNetwork: true  # ← 使用宿主机网络，监听 localhost:1883
+      nodeSelector:
+        node-role.kubernetes.io/edge: ""  # ← 仅调度到边缘节点
+      containers:
+      - name: edge-eclipse-mosquitto
+        image: eclipse-mosquitto:1.6.15
+        volumeMounts:
+        - name: mqtt-data-path
+          mountPath: /mosquitto/data
+      volumes:
+      - name: mqtt-data-path
+        hostPath:
+          path: /var/lib/kubeedge/mqtt/data
+```
+
+**EdgeCore 配置**（`/etc/kubeedge/config/edgecore.yaml`）：
+```yaml
+modules:
+  eventBus:
+    enable: true
+    mqttMode: 2  # 外部 MQTT
+    mqttServerExternal: tcp://127.0.0.1:1883  # ← 连接宿主机 localhost
+    mqttServerInternal: tcp://127.0.0.1:1884
+```
+
+**工作原理**：
+1. 云端 DaemonSet 自动在边缘节点创建 MQTT Pod
+2. Pod 使用 `hostNetwork: true`，监听 `0.0.0.0:1883`
+3. EdgeCore 连接 `localhost:1883` 访问 MQTT
+4. IoT 设备通过边缘节点 IP:1883 连接
 
 ---
 
 ## 部署方案对比
 
-### 方案 A：边缘本地 MQTT（推荐）
+### 方案 A：边缘本地 MQTT（传统方式）
 
 #### 部署方式
 ```bash

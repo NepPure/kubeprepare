@@ -169,16 +169,16 @@ jobs:
             echo "警告：EdgeMesh 镜像下载失败，边缘节点将无法加入服务网格"
           fi
           
-          # Mosquitto MQTT 镜像 (物联网设备管理)
-          MQTT_IMAGE="eclipse-mosquitto:2.0"
+          # Mosquitto MQTT 镜像 (供云端 DaemonSet 调度使用，版本与 CloudCore Helm Chart 一致)
+          MQTT_IMAGE="eclipse-mosquitto:1.6.15"
           
           echo "  拉取 MQTT 镜像: $MQTT_IMAGE"
           if docker pull --platform ${{ matrix.dockerfile_platform }} "$MQTT_IMAGE"; then
-            docker save "$MQTT_IMAGE" -o "images/eclipse-mosquitto-2.0.tar"
-            echo "✓ Mosquitto MQTT 镜像已保存 (用于边缘节点的物联网设备连接)"
-            ls -lh images/eclipse-mosquitto-2.0.tar
+            docker save "$MQTT_IMAGE" -o "images/eclipse-mosquitto-1.6.15.tar"
+            echo "✓ Mosquitto MQTT 镜像已保存 (版本 1.6.15，与 CloudCore Helm Chart 一致)"
+            ls -lh images/eclipse-mosquitto-1.6.15.tar
           else
-            echo "警告：Mosquitto 镜像下载失败，将影响设备管理功能"
+            echo "警告：Mosquitto 镜像下载失败，云端 DaemonSet 将无法调度 MQTT Pod"
           fi
           
           # 5. 创建安装元数据

@@ -2,7 +2,12 @@
 
 ## 版本决策摘要
 
-**统一版本**: `eclipse-mosquitto:2.0` (或 2.0.x 如 2.0.20)
+**统一版本**: `eclipse-mosquitto:1.6.15`
+
+**决策原因**: 
+- ✅ KubeEdge CloudCore 官方 Helm Chart 默认版本
+- ✅ 云端 DaemonSet 自动调度，无需手动管理
+- ✅ 统一镜像版本，简化维护
 
 ---
 
@@ -68,19 +73,24 @@
 
 ### 边缘节点（Edge）
 
-- **镜像版本**: `eclipse-mosquitto:2.0`
-- **管理方式**: systemd service（通过 containerd ctr 运行）
-- **配置位置**: `/etc/systemd/system/mosquitto.service`
-- **监听地址**: `localhost:1883`（本地访问）
-- **数据目录**: `/var/lib/mosquitto/data`
-- **日志目录**: `/var/log/mosquitto`
+- **镜像版本**: `eclipse-mosquitto:1.6.15`
+- **管理方式**: Kubernetes DaemonSet（云端调度）
+- **镜像来源**: 边缘安装时预导入到 containerd
+- **Pod 名称**: `edge-eclipse-mosquitto-xxxxx`
+- **命名空间**: `kubeedge`
+- **网络模式**: `hostNetwork: true`（监听 `0.0.0.0:1883`）
+- **数据目录**: `/var/lib/kubeedge/mqtt/data`（hostPath）
 
 ```bash
-# 查看状态
-systemctl status mosquitto
+# 查看 MQTT Pod 状态
+kubectl get pods -n kubeedge -l k8s-app=eclipse-mosquitto -o wide
 
-# 验证运行
+# 查看 Pod 详情
+kubectl describe pod -n kubeedge -l k8s-app=eclipse-mosquitto
+
+# 验证端口监听
 ss -tlnp | grep 1883
+# 预期: mosquitto 进程监听 1883 端口
 ```
 
 **EdgeCore 配置** (`/etc/kubeedge/config/edgecore.yaml`):
@@ -97,15 +107,28 @@ modules:
 
 ### 云端（Cloud）
 
-- **MQTT 部署**: ❌ **不部署**
-- **说明**: 云端不需要运行 MQTT Broker
-  - KubeEdge IoT 架构中，设备直连边缘节点的 MQTT
-  - 边缘通过 EdgeHub 与云端 CloudCore 通信（WebSocket/QUIC）
+- **MQTT DaemonSet**: ✅ **已部署**（CloudCore Helm Chart 自动创建）
+- **DaemonSet 名称**: `edge-eclipse-mosquitto`
+- **命名空间**: `kubeedge`
+- **调度策略**: 仅调度到标签为 `node-role.kubernetes.io/edge` 的节点
+- **镜像版本**: `eclipse-mosquitto:1.6.15`
 
-**之前错误（已解决）**:
-- ❌ 云端错误调度了 MQTT Pod (`eclipse-mosquitto:1.6.15`)
-- ❌ 与边缘本地 MQTT 端口冲突（都监听 1883）
-- ✅ 已通过文档说明正确部署方式
+```bash
+# 查看 DaemonSet
+kubectl get daemonset -n kubeedge edge-eclipse-mosquitto
+
+# 查看调度的 Pod
+kubectl get pods -n kubeedge -l k8s-app=eclipse-mosquitto -o wide
+
+# 查看 DaemonSet 详情
+kubectl describe daemonset -n kubeedge edge-eclipse-mosquitto
+```
+
+**工作原理**:
+- CloudCore Helm Chart 创建 DaemonSet
+- DaemonSet 自动在每个边缘节点创建 MQTT Pod
+- Pod 使用 `hostNetwork: true`，无端口冲突
+- EdgeCore 通过 `localhost:1883` 连接
 
 ---
 

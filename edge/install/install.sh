@@ -414,11 +414,11 @@ if [ -n "$IMAGES_DIR" ] && [ -d "$IMAGES_DIR" ]; then
     echo "     边缘节点将无法加入服务网格" | tee -a "$INSTALL_LOG"
   fi
   
-  # 2. 导入 Mosquitto MQTT 镜像
+  # 2. 导入 Mosquitto MQTT 镜像（供云端 DaemonSet 调度使用）
   MQTT_IMAGE_TAR=$(find "$IMAGES_DIR" -name "*mosquitto*.tar" -type f 2>/dev/null | head -1)
   
   if [ -n "$MQTT_IMAGE_TAR" ] && [ -f "$MQTT_IMAGE_TAR" ]; then
-    echo "  导入 Mosquitto MQTT 镜像..." | tee -a "$INSTALL_LOG"
+    echo "  导入 Mosquitto MQTT 镜像（供云端 DaemonSet 调度）..." | tee -a "$INSTALL_LOG"
     
     # 确保 containerd 正在运行
     if ! systemctl is-active --quiet containerd 2>/dev/null; then
@@ -427,71 +427,20 @@ if [ -n "$IMAGES_DIR" ] && [ -d "$IMAGES_DIR" ]; then
       sleep 2
     fi
     
-    # 导入镜像到 containerd（使用离线包提供的 ctr）
+    # 导入镜像到 containerd（供云端 Kubernetes DaemonSet 调度使用）
     if [ -f "$CTR_BIN" ]; then
       if "$CTR_BIN" -n k8s.io images import "$MQTT_IMAGE_TAR" >> "$INSTALL_LOG" 2>&1; then
-        echo "  ✓ MQTT 镜像已导入到 containerd" | tee -a "$INSTALL_LOG"
+        echo "  ✓ MQTT 镜像已导入 (eclipse-mosquitto:1.6.15)" | tee -a "$INSTALL_LOG"
+        echo "  ℹ️  MQTT 将由云端 DaemonSet 自动调度到本节点" | tee -a "$INSTALL_LOG"
+        MQTT_DEPLOYED=true
         
-        # 创建 mosquitto systemd service（使用离线包 ctr 的绝对路径）
-        cat > /etc/systemd/system/mosquitto.service << MOSQUITTO_SVC_EOF
-[Unit]
-Description=Mosquitto MQTT Broker for KubeEdge IoT Devices
-Documentation=https://mosquitto.org/
-After=network-online.target containerd.service
-Wants=network-online.target
-Requires=containerd.service
-
-[Service]
-Type=simple
-Restart=always
-RestartSec=5
-TimeoutStartSec=0
-
-# 使用 ctr 运行 mosquitto 容器
-ExecStartPre=-$CTR_BIN -n k8s.io task kill --signal SIGTERM mosquitto
-ExecStartPre=-$CTR_BIN -n k8s.io task delete mosquitto
-ExecStartPre=-$CTR_BIN -n k8s.io container delete mosquitto
-ExecStartPre=/bin/mkdir -p /var/lib/mosquitto/data /var/log/mosquitto
-
-ExecStart=$CTR_BIN -n k8s.io run \
-  --rm \
-  --net-host \
-  --mount type=bind,src=/var/lib/mosquitto/data,dst=/mosquitto/data,options=rbind:rw \
-  --mount type=bind,src=/var/log/mosquitto,dst=/mosquitto/log,options=rbind:rw \
-  docker.io/library/eclipse-mosquitto:2.0 \
-  mosquitto \
-  mosquitto -c /mosquitto-no-auth.conf
-
-ExecStop=$CTR_BIN -n k8s.io task kill --signal SIGTERM mosquitto
-ExecStopPost=$CTR_BIN -n k8s.io task delete mosquitto
-ExecStopPost=$CTR_BIN -n k8s.io container delete mosquitto
-
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=mosquitto
-
-[Install]
-WantedBy=multi-user.target
-MOSQUITTO_SVC_EOF
-        
-        systemctl daemon-reload
-        systemctl enable mosquitto
-        systemctl start mosquitto
-        
-        # 等待 MQTT 启动
-        echo "    等待 MQTT broker 启动..." | tee -a "$INSTALL_LOG"
-        for i in {1..10}; do
-          if systemctl is-active --quiet mosquitto; then
-            echo "  ✓ MQTT Broker 已启动 (localhost:1883)" | tee -a "$INSTALL_LOG"
-            MQTT_DEPLOYED=true
-            break
-          fi
-          sleep 1
-        done
-        
-        if ! $MQTT_DEPLOYED; then
-          echo "  ⚠️  MQTT 启动超时,请检查: systemctl status mosquitto" | tee -a "$INSTALL_LOG"
-        fi
+        # 云端 DaemonSet 会自动调度 MQTT Pod 到此节点
+        # 无需本地 systemd 管理
+        echo "" | tee -a "$INSTALL_LOG"
+        echo "  📋 MQTT 部署方式: 云端 Kubernetes DaemonSet" | tee -a "$INSTALL_LOG"
+        echo "  ℹ️  云端会自动在本节点创建 MQTT Pod" | tee -a "$INSTALL_LOG"
+        echo "  ℹ️  验证命令: kubectl get pods -n kubeedge -l k8s-app=eclipse-mosquitto" | tee -a "$INSTALL_LOG"
+        echo "" | tee -a "$INSTALL_LOG"
       else
         echo "  ⚠️  MQTT 镜像导入失败" | tee -a "$INSTALL_LOG"
       fi
@@ -506,8 +455,11 @@ else
 fi
 
 if ! $MQTT_DEPLOYED; then
-  echo "  注意: MQTT broker 未部署,设备管理功能将不可用" | tee -a "$INSTALL_LOG"
-  echo "  可以稍后手动部署: systemctl start mosquitto" | tee -a "$INSTALL_LOG"
+  echo "  注意: MQTT 镜像未导入,云端 DaemonSet 将无法调度 MQTT Pod" | tee -a "$INSTALL_LOG"
+  echo "  请确保离线包中包含 eclipse-mosquitto:1.6.15 镜像" | tee -a "$INSTALL_LOG"
+else
+  echo "  📋 MQTT 部署方式: 云端 Kubernetes DaemonSet" | tee -a "$INSTALL_LOG"
+  echo "  ℹ️  DaemonSet 将在边缘节点 Ready 后自动创建 MQTT Pod" | tee -a "$INSTALL_LOG"
 fi
 
 # Install EdgeCore
@@ -527,7 +479,7 @@ cat > /etc/systemd/system/edgecore.service << 'EDGECORE_SVC_EOF'
 [Unit]
 Description=KubeEdge EdgeCore
 Documentation=https://kubeedge.io
-After=network-online.target mosquitto.service containerd.service
+After=network-online.target containerd.service
 Wants=network-online.target
 Requires=containerd.service
 
