@@ -320,7 +320,8 @@ if $KUBECTL -n kubeedge get cm cloudcore 2>/dev/null | grep -q cloudcore; then
     echo "  ✓ dynamicController and cloudStream are already enabled" | tee -a "$INSTALL_LOG"
   else
     # Use kubectl patch to enable dynamicController and cloudStream
-    if $KUBECTL -n kubeedge patch cm cloudcore --type=json -p='[{"op": "replace", "path": "/data/cloudcore.yaml", "value": "modules:\n  cloudHub:\n    advertiseAddress:\n    - '\"$EXTERNAL_IP\"'\n    https:\n      enable: true\n      port: 10002\n    nodeLimit: 1000\n    websocket:\n      enable: true\n      port: 10000\n  cloudStream:\n    enable: true\n    streamPort: 10003\n    tunnelPort: 10004\n  dynamicController:\n    enable: true\n"}]' >> "$INSTALL_LOG" 2>&1; then
+    # 使用统一的rootCA/server证书链，与edge侧保持一致
+    if $KUBECTL -n kubeedge patch cm cloudcore --type=json -p='[{"op": "replace", "path": "/data/cloudcore.yaml", "value": "modules:\n  cloudHub:\n    advertiseAddress:\n    - '"$EXTERNAL_IP"'\n    https:\n      enable: true\n      port: 10002\n    nodeLimit: 1000\n    websocket:\n      enable: true\n      port: 10000\n  cloudStream:\n    enable: true\n    streamPort: 10003\n    tlsStreamCAFile: /etc/kubeedge/ca/rootCA.crt\n    tlsStreamCertFile: /etc/kubeedge/certs/server.crt\n    tlsStreamPrivateKeyFile: /etc/kubeedge/certs/server.key\n    tunnelPort: 10004\n  dynamicController:\n    enable: true\n"}]' >> "$INSTALL_LOG" 2>&1; then
       echo "  ✓ dynamicController and cloudStream enabled successfully" | tee -a "$INSTALL_LOG"
       
       # Restart CloudCore pod to apply changes
@@ -368,13 +369,24 @@ DYNAMIC_EOF
       # Enable cloudStream if it's disabled
       sed -i '/cloudStream:/,/enable:/ s/enable: false/enable: true/' /etc/kubeedge/config/cloudcore.yaml
     else
-      # Add cloudStream section
+      # Add cloudStream section with unified rootCA/server certificates
       cat >> /etc/kubeedge/config/cloudcore.yaml << 'STREAM_EOF'
   cloudStream:
     enable: true
     streamPort: 10003
+    tlsStreamCAFile: /etc/kubeedge/ca/rootCA.crt
+    tlsStreamCertFile: /etc/kubeedge/certs/server.crt
+    tlsStreamPrivateKeyFile: /etc/kubeedge/certs/server.key
     tunnelPort: 10004
 STREAM_EOF
+    fi
+    
+    # 确保cloudStream使用统一的rootCA/server证书链（修复现有配置）
+    if grep -q "tlsStreamCAFile.*streamCA" /etc/kubeedge/config/cloudcore.yaml 2>/dev/null; then
+      echo "  修正cloudStream证书配置为rootCA/server..." | tee -a "$INSTALL_LOG"
+      sed -i 's|tlsStreamCAFile:.*|tlsStreamCAFile: /etc/kubeedge/ca/rootCA.crt|' /etc/kubeedge/config/cloudcore.yaml
+      sed -i 's|tlsStreamCertFile:.*|tlsStreamCertFile: /etc/kubeedge/certs/server.crt|' /etc/kubeedge/config/cloudcore.yaml
+      sed -i 's|tlsStreamPrivateKeyFile:.*|tlsStreamPrivateKeyFile: /etc/kubeedge/certs/server.key|' /etc/kubeedge/config/cloudcore.yaml
     fi
     
     # Ensure cloudHub has https and websocket ports configured

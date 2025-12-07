@@ -413,8 +413,8 @@ cloudStream:
   enable: true
   streamPort: 10003
   tlsStreamCAFile: /etc/kubeedge/ca/rootCA.crt
-  tlsStreamCertFile: /etc/kubeedge/certs/stream.crt
-  tlsStreamPrivateKeyFile: /etc/kubeedge/certs/stream.key
+  tlsStreamCertFile: /etc/kubeedge/certs/server.crt
+  tlsStreamPrivateKeyFile: /etc/kubeedge/certs/server.key
   tlsEnable: true
 authentication:
   address: 127.0.0.1:10003
