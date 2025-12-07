@@ -468,10 +468,11 @@ if $KUBECTL get deployment metrics-server -n kube-system &>/dev/null; then
   echo "  Found built-in metrics-server, applying KubeEdge compatibility patch..." | tee -a "$INSTALL_LOG"
   
   # 为 KubeEdge 修改 metrics-server 部署（参考 KubeEdge 官方文档）
-  # 1. 添加 nodeAffinity 确保只在 master 节点运行
-  # 2. 添加 tolerations 容忍 master 节点污点  
-  # 3. 启用 hostNetwork 模式
-  # 4. 添加 --kubelet-insecure-tls 跳过 TLS 验证
+  # 1. 启用 hostNetwork 以访问 CloudStream 隧道端口映射
+  # 2. 修改监听端口为 4443 避免与 kubelet 的 10250 冲突
+  # 3. 添加 nodeAffinity 确保只在 master 节点运行
+  # 4. 添加 tolerations 容忍 master 节点污点  
+  # 5. 添加 --kubelet-insecure-tls 跳过 TLS 验证
   
   PATCH_DATA=$(cat <<'EOF'
 {
@@ -514,6 +515,18 @@ if $KUBECTL get deployment metrics-server -n kube-system &>/dev/null; then
             "operator": "Exists",
             "effect": "NoSchedule"
           }
+        ],
+        "containers": [
+          {
+            "name": "metrics-server",
+            "ports": [
+              {
+                "name": "https",
+                "containerPort": 4443,
+                "protocol": "TCP"
+              }
+            ]
+          }
         ]
       }
     }
@@ -522,23 +535,28 @@ if $KUBECTL get deployment metrics-server -n kube-system &>/dev/null; then
 EOF
 )
 
-  # 单独添加 --kubelet-insecure-tls 参数
-  ARGS_PATCH='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+  # 修改监听端口和添加 --kubelet-insecure-tls 参数
+  ARGS_PATCH='[
+    {"op": "replace", "path": "/spec/template/spec/containers/0/args/1", "value": "--secure-port=4443"},
+    {"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}
+  ]'
   
-  # 应用主要配置 patch (affinity, tolerations, hostNetwork)
+  # 应用主要配置 patch (hostNetwork, affinity, tolerations, containerPort)
   if echo "$PATCH_DATA" | $KUBECTL patch deployment metrics-server -n kube-system --type=strategic --patch-file /dev/stdin >> "$INSTALL_LOG" 2>&1; then
-    echo "  ✓ Applied affinity, tolerations and hostNetwork." | tee -a "$INSTALL_LOG"
+    echo "  ✓ Applied hostNetwork, affinity, tolerations and containerPort." | tee -a "$INSTALL_LOG"
     
-    # 添加 --kubelet-insecure-tls 参数
+    # 修改启动参数：监听端口和 TLS 设置
     if echo "$ARGS_PATCH" | $KUBECTL patch deployment metrics-server -n kube-system --type=json --patch-file /dev/stdin >> "$INSTALL_LOG" 2>&1; then
-      echo "  ✓ Added --kubelet-insecure-tls argument." | tee -a "$INSTALL_LOG"
+      echo "  ✓ Updated --secure-port=4443 and added --kubelet-insecure-tls." | tee -a "$INSTALL_LOG"
     else
-      echo "  ⚠ Failed to add --kubelet-insecure-tls, may already exist." | tee -a "$INSTALL_LOG"
+      echo "  ⚠ Failed to update args, may already be configured." | tee -a "$INSTALL_LOG"
     fi
     
     echo "  ✓ Metrics-server patch applied. It will restart automatically." | tee -a "$INSTALL_LOG"
-    echo "  提示: metrics-server 将在后台重启，可通过以下命令验证:" | tee -a "$INSTALL_LOG"
-    echo "    kubectl get pods -n kube-system -l k8s-app=metrics-server" | tee -a "$INSTALL_LOG"
+    echo "  提示: metrics-server 已配置为:" | tee -a "$INSTALL_LOG"
+    echo "    - 使用 hostNetwork 访问 CloudStream 隧道" | tee -a "$INSTALL_LOG"
+    echo "    - 监听端口 4443 (避免与 kubelet:10250 冲突)" | tee -a "$INSTALL_LOG"
+    echo "    - 验证命令: kubectl get pods -n kube-system -l k8s-app=metrics-server" | tee -a "$INSTALL_LOG"
   else
     echo "  ✗ Failed to patch metrics-server." | tee -a "$INSTALL_LOG"
   fi
