@@ -126,6 +126,7 @@ sudo keadm join \
 - Sandbox 创建失败：确认 `pause:3.6` 已导入且 `config.toml` 指向正确；重启 containerd
 - **cgroup driver 冲突**（重要）：keadm join v1.22.0 使用 cgroupfs 路径格式，与 `SystemdCgroup = true` 不兼容，导致 runc 报错 `expected cgroupsPath to be of format "slice:prefix:name"`。**解决方案**：containerd config.toml 中设置 `SystemdCgroup = false`（边缘场景推荐 cgroupfs）
 - **WebSocket 404 错误**（关键）：keadm join 的 `--cloudcore-ipport` 参数应使用 WebSocket 端口（10000），证书下载使用单独的 `--certport=10002`。错误配置为仅 10002 会导致运行时 WebSocket 连接 404。**正确命令**：`keadm join --cloudcore-ipport=<IP>:10000 --certport=10002`
+- **脚本闪退问题**：脚本使用 `set -euo pipefail` 严格模式，交互式 `read` 命令可能在非交互环境或用户输入异常时触发静默退出。已通过 `REPLY=""` 初始化和 `${REPLY:-}` 安全引用修复，避免 `set -u` 冲突
 - Node NotReady：确认 CNI plugins 已安装并生成 node 专属 CIDR；检查 EdgeCore `networkPluginName: cni`
 - DNS 解析异常：确认 `clusterDNS` 使用 `169.254.96.16`（EdgeMesh DNS），避免指向云 CoreDNS
 

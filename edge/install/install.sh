@@ -78,9 +78,10 @@ if [ -f /usr/local/bin/edgecore ] || systemctl list-units --full -all 2>/dev/nul
   echo "   现有 EdgeCore 安装位置: /usr/local/bin/edgecore" | tee -a "$INSTALL_LOG"
   echo "   如需重新安装，请先运行清理脚本: sudo ./cleanup.sh" | tee -a "$INSTALL_LOG"
   echo "" | tee -a "$INSTALL_LOG"
-  read -p "是否继续？这将覆盖现有安装 (y/N): " -n 1 -r
+  REPLY=""
+  read -p "是否继续？这将覆盖现有安装 (y/N): " -n 1 -r || true
   echo ""
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+  if [[ ! ${REPLY:-} =~ ^[Yy]$ ]]; then
     echo "❌ 用户取消安装" | tee -a "$INSTALL_LOG"
     exit 1
   fi
@@ -120,9 +121,10 @@ if command -v containerd &> /dev/null; then
     echo "  1. 使用系统现有的 containerd (推荐，保持系统一致性)" | tee -a "$INSTALL_LOG"
     echo "  2. 覆盖为离线包的 containerd (可能导致版本不兼容)" | tee -a "$INSTALL_LOG"
     echo "" | tee -a "$INSTALL_LOG"
-    read -p "是否使用系统现有的 containerd？(Y/n): " -n 1 -r
+    REPLY=""
+    read -p "是否使用系统现有的 containerd？(Y/n): " -n 1 -r || true
     echo ""
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    if [[ ! ${REPLY:-} =~ ^[Nn]$ ]]; then
       USE_SYSTEM_CONTAINERD=true
       echo "✓ 将使用系统现有的 containerd: $CONTAINERD_PATH" | tee -a "$INSTALL_LOG"
     else
