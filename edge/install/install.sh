@@ -475,7 +475,7 @@ else
 fi
 
 # Use keadm join to register edge node (following official workflow)
-echo "  Joining edge node using keadm..." | tee -a "$INSTALL_LOG"
+echo "  Preparing for edge node join..." | tee -a "$INSTALL_LOG"
 
 # Find keadm binary
 KEADM_BIN=$(find "$SCRIPT_DIR" -name "keadm" -type f 2>/dev/null | head -1)
@@ -487,8 +487,37 @@ fi
 cp "$KEADM_BIN" /usr/local/bin/keadm
 chmod +x /usr/local/bin/keadm
 
+# Pre-load KubeEdge installation-package image (required for offline keadm join)
+echo "  Pre-loading KubeEdge installation-package image..." | tee -a "$INSTALL_LOG"
+IMAGES_DIR=$(find "$SCRIPT_DIR" -type d -name "images" 2>/dev/null | head -1)
+INSTALLATION_IMAGE=""
+
+if [ -d "$IMAGES_DIR" ]; then
+  # Look for installation-package image
+  INSTALLATION_IMAGE=$(find "$IMAGES_DIR" -name "*installation-package*.tar" -type f 2>/dev/null | head -1)
+fi
+
+if [ -n "$INSTALLATION_IMAGE" ] && [ -f "$INSTALLATION_IMAGE" ]; then
+  echo "  Loading: $(basename "$INSTALLATION_IMAGE")" | tee -a "$INSTALL_LOG"
+  if ctr -n k8s.io images import "$INSTALLATION_IMAGE" >> "$INSTALL_LOG" 2>&1; then
+    echo "  ✓ installation-package image loaded successfully" | tee -a "$INSTALL_LOG"
+    # Verify image
+    if ctr -n k8s.io images ls | grep -q "installation-package"; then
+      echo "  ✓ Image verified in containerd" | tee -a "$INSTALL_LOG"
+    fi
+  else
+    echo "  Warning: Failed to load installation-package image" | tee -a "$INSTALL_LOG"
+    echo "  keadm join may attempt online download" | tee -a "$INSTALL_LOG"
+  fi
+else
+  echo "  Warning: installation-package image not found in offline package" | tee -a "$INSTALL_LOG"
+  echo "  Expected location: $IMAGES_DIR/*installation-package*.tar" | tee -a "$INSTALL_LOG"
+  echo "  keadm join will attempt online download (may fail if offline)" | tee -a "$INSTALL_LOG"
+fi
+
 # Run keadm join to generate config and download certificates from cloud
 # Note: This will automatically download certs via cloudHub.https (port 10002)
+echo "  Joining edge node using keadm..." | tee -a "$INSTALL_LOG"
 echo "  Running: keadm join --cloudcore-ipport=${CLOUD_IP}:${CLOUD_PORT} --edgenode-name=${NODE_NAME} --token=<token> --kubeedge-version=v${KUBEEDGE_VERSION}" | tee -a "$INSTALL_LOG"
 
 if /usr/local/bin/keadm join \

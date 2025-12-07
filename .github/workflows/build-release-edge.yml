@@ -117,9 +117,21 @@ jobs:
           echo "[4/6] 跳过 CNI 插件 (使用 host 网络模式)..."
           echo "✓ EdgeMesh 将用于边缘服务网格"
           
-          # 4.5. 下载 EdgeMesh 和 Mosquitto MQTT 镜像
-          echo "[4.5/6] 下载 EdgeMesh 和 Mosquitto MQTT 镜像..."
+          # 4.5. 下载 KubeEdge、EdgeMesh 和 Mosquitto MQTT 镜像
+          echo "[4.5/6] 下载 KubeEdge、EdgeMesh 和 Mosquitto MQTT 镜像..."
           mkdir -p images
+          
+          # KubeEdge installation-package 镜像 (keadm join 依赖)
+          INSTALLATION_PKG_IMAGE="docker.io/kubeedge/installation-package:v${KUBEEDGE_VERSION}"
+          
+          echo "  拉取 KubeEdge installation-package 镜像: $INSTALLATION_PKG_IMAGE"
+          if docker pull --platform ${{ matrix.dockerfile_platform }} "$INSTALLATION_PKG_IMAGE"; then
+            docker save "$INSTALLATION_PKG_IMAGE" -o "images/kubeedge-installation-package-v${KUBEEDGE_VERSION}.tar"
+            echo "✓ KubeEdge installation-package 镜像已保存 (keadm join 离线必需)"
+            ls -lh images/kubeedge-installation-package-v${KUBEEDGE_VERSION}.tar
+          else
+            echo "警告：installation-package 镜像下载失败，keadm join 将无法离线执行"
+          fi
           
           # EdgeMesh Agent 镜像 (边缘服务网格)
           EDGEMESH_VERSION="v1.17.0"
