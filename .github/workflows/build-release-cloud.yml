@@ -55,16 +55,19 @@ jobs:
           echo "tag_version=${TAG_VERSION}" >> $GITHUB_OUTPUT
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BUILD_DIR=$(pwd)/build-${{ matrix.arch }}" >> $GITHUB_ENV
+          
+          # 定义版本号（全局复用）
+          echo "K3S_VERSION=v1.34.2+k3s1" >> $GITHUB_ENV
+          echo "KUBEEDGE_VERSION=1.22.0" >> $GITHUB_ENV
+          echo "EDGEMESH_VERSION=v1.17.0" >> $GITHUB_ENV
+          echo "HELM_VERSION=v3.19.2" >> $GITHUB_ENV
 
       - name: 构建云端离线包
         run: |
-          set -euo pipefail  # 任何命令失败都立即终止流程
-          
-          BUILD_DIR="build-${{ matrix.arch }}"
-          mkdir -p "$BUILD_DIR/cloud"
-          cd "$BUILD_DIR/cloud"
-          
           echo "=== 构建云端离线包 (架构: ${{ matrix.arch }}) ==="
+          echo "版本信息: K3s ${K3S_VERSION}, KubeEdge ${KUBEEDGE_VERSION}"
+          
+          # 1. 下载 k3s 二进制文件 (架构: ${{ matrix.arch }}) ==="
           
           # 定义版本
           K3S_VERSION="v1.34.2+k3s1"
@@ -126,7 +129,6 @@ jobs:
           )
           
           # EdgeMesh 镜像 (用于边缘服务网格)
-          EDGEMESH_VERSION="v1.17.0"
           EDGEMESH_IMAGES=(
             "docker.io/kubeedge/edgemesh-agent:${EDGEMESH_VERSION}"
           )
@@ -152,7 +154,6 @@ jobs:
           
           # 4.5. 下载 Helm 二进制文件
           echo "[4.4/6] 下载 Helm 二进制文件..."
-          HELM_VERSION="v3.19.2"
           HELM_TAR="helm-${HELM_VERSION}-linux-${{ matrix.arch }}.tar.gz"
           HELM_URL="https://get.helm.sh/${HELM_TAR}"
           wget -q -O helm.tar.gz "$HELM_URL" || (echo "错误：无法下载 Helm，EdgeMesh 安装将无法执行" && exit 1)
@@ -285,10 +286,8 @@ jobs:
 
       - name: 生成校验和并准备发布文件
         run: |
-          # 为云端包生成校验和
+          # 为云端包生成校验和（使用环境变量中的版本号）
           cd "${BUILD_DIR}/cloud"
-          KUBEEDGE_VERSION="1.22.0"
-          K3S_VERSION="v1.32.1+k3s1"
           PACKAGE_NAME="kubeedge-cloud-${KUBEEDGE_VERSION}-k3s-${K3S_VERSION}-${{ matrix.arch }}.tar.gz"
           sha256sum "$PACKAGE_NAME" > "${PACKAGE_NAME}.sha256sum.txt"
           

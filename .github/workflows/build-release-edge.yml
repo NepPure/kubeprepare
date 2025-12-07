@@ -55,6 +55,14 @@ jobs:
           echo "tag_version=${TAG_VERSION}" >> $GITHUB_OUTPUT
           echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
           echo "BUILD_DIR=$(pwd)/build-${{ matrix.arch }}" >> $GITHUB_ENV
+          
+          # 定义版本号（全局复用）
+          echo "KUBEEDGE_VERSION=1.22.0" >> $GITHUB_ENV
+          echo "CONTAINERD_VERSION=1.7.29" >> $GITHUB_ENV
+          echo "RUNC_VERSION=1.4.0" >> $GITHUB_ENV
+          echo "CNI_VERSION=1.6.1" >> $GITHUB_ENV
+          echo "EDGEMESH_VERSION=v1.17.0" >> $GITHUB_ENV
+          echo "MOSQUITTO_VERSION=2.0" >> $GITHUB_ENV
 
       - name: 构建边缘端离线包
         run: |
@@ -65,11 +73,7 @@ jobs:
           cd "$BUILD_DIR/edge"
           
           echo "=== 构建边缘端离线包 (架构: ${{ matrix.arch }}) ==="
-          
-          # 定义版本
-          KUBEEDGE_VERSION="1.22.0"
-          CONTAINERD_VERSION="1.7.29"
-          RUNC_VERSION="1.4.0"
+          echo "版本信息: KubeEdge ${KUBEEDGE_VERSION}, containerd ${CONTAINERD_VERSION}, runc ${RUNC_VERSION}"
           
           # 1. 下载 KubeEdge 边缘端包
           echo "[1/6] 下载 KubeEdge 边缘端包..."
@@ -110,10 +114,9 @@ jobs:
           chmod +x runc
           echo "✓ runc 下载完成"
           
-          # 4. 下载 CNI 插件 (v1.22.0 要求，避免 Node NotReady)
+          # 4. 下载 CNI 插件 (v1.22.0 要求，避免 Node NotReady)（使用环境变量中的版本号）
           echo "[4/6] 下载 CNI 插件..."
-          CNI_VERSION="v1.5.1"
-          CNI_URL="https://github.com/containernetworking/plugins/releases/download/${CNI_VERSION}/cni-plugins-linux-${{ matrix.arch }}-${CNI_VERSION}.tgz"
+          CNI_URL="https://github.com/containernetworking/plugins/releases/download/v${CNI_VERSION}/cni-plugins-linux-${{ matrix.arch }}-v${CNI_VERSION}.tgz"
           
           mkdir -p cni-bin
           wget -q -O cni-plugins.tgz "$CNI_URL" || (echo "错误：CNI 插件下载失败，边缘节点将显示 NotReady" && exit 1)
@@ -144,8 +147,7 @@ jobs:
           echo "✓ KubeEdge pause 镜像已保存 (containerd sandbox 必需)"
           ls -lh images/kubeedge-pause-3.6.tar
           
-          # EdgeMesh Agent 镜像 (边缘服务网格)
-          EDGEMESH_VERSION="v1.17.0"
+          # EdgeMesh Agent 镜像 (边缘服务网格，使用环境变量中的版本号)
           EDGEMESH_IMAGE="docker.io/kubeedge/edgemesh-agent:${EDGEMESH_VERSION}"
           
           echo "  拉取 EdgeMesh 镜像: $EDGEMESH_IMAGE"
@@ -215,9 +217,8 @@ jobs:
 
       - name: 生成校验和并准备发布文件
         run: |
-          # 为边缘端包生成校验和
+          # 为边缘端包生成校验和（使用环境变量中的版本号）
           cd "${BUILD_DIR}/edge"
-          KUBEEDGE_VERSION="1.22.0"
           PACKAGE_NAME="kubeedge-edge-${KUBEEDGE_VERSION}-${{ matrix.arch }}.tar.gz"
           sha256sum "$PACKAGE_NAME" > "${PACKAGE_NAME}.sha256sum.txt"
           
