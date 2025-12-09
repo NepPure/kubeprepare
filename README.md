@@ -7,6 +7,8 @@
 - **边缘端**：containerd + runc + KubeEdge EdgeCore（支持 amd64/arm64）
 - **日志与监控**：kubectl logs/exec + kubectl top（完全离线支持）
 
+> kubectl logs/exec 无法执行到边缘问题待解决
+
 支持在**完全离线环境**下快速部署 KubeEdge 边缘计算基础设施。
 
 ### 完整离线支持
