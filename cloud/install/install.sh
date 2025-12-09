@@ -550,6 +550,20 @@ EOF
   else
     echo "  ⚠ Failed to add --kubelet-insecure-tls (may already exist)." | tee -a "$INSTALL_LOG"
   fi
+
+  # Step 5: 添加 --kubelet-use-node-status-port 参数（确保使用 NodeStatus 上的 kubelet 端口 1035x）
+  if $KUBECTL patch deployment metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-use-node-status-port"}]' >> "$INSTALL_LOG" 2>&1; then
+    echo "  ✓ Added --kubelet-use-node-status-port." | tee -a "$INSTALL_LOG"
+  else
+    echo "  ⚠ Failed to add --kubelet-use-node-status-port (may already exist)." | tee -a "$INSTALL_LOG"
+  fi
+
+  # Step 6: 添加 --kubelet-preferred-address-types，优先使用 InternalIP
+  if $KUBECTL patch deployment metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-preferred-address-types=InternalIP,Hostname,InternalDNS,ExternalDNS,ExternalIP"}]' >> "$INSTALL_LOG" 2>&1; then
+    echo "  ✓ Added --kubelet-preferred-address-types." | tee -a "$INSTALL_LOG"
+  else
+    echo "  ⚠ Failed to add --kubelet-preferred-address-types (may already exist)." | tee -a "$INSTALL_LOG"
+  fi
   
   echo "  ✓ Metrics-server patch completed. It will restart automatically." | tee -a "$INSTALL_LOG"
   echo "  提示: metrics-server 已配置为:" | tee -a "$INSTALL_LOG"
@@ -610,6 +624,19 @@ else
   echo "    kubectl get ds -n kube-system -l svccontroller.k3s.cattle.io/svcname -o name | \\" | tee -a "$INSTALL_LOG"
   echo "      xargs -I{} kubectl patch {} -n kube-system --type=strategic \\" | tee -a "$INSTALL_LOG"
   echo "      -p '{\"spec\":{\"template\":{\"spec\":{\"affinity\":{\"nodeAffinity\":{\"requiredDuringSchedulingIgnoredDuringExecution\":{\"nodeSelectorTerms\":[{\"matchExpressions\":[{\"key\":\"node-role.kubernetes.io/edge\",\"operator\":\"DoesNotExist\"}]}]}}}}}}}'" | tee -a "$INSTALL_LOG"
+fi
+
+# 额外建议：避免 kube-proxy 调度到边缘节点（官方建议）
+echo "" | tee -a "$INSTALL_LOG"
+echo "=== Configuring kube-proxy to avoid edge nodes (optional) ===" | tee -a "$INSTALL_LOG"
+if $KUBECTL -n kube-system get daemonset kube-proxy &>/dev/null; then
+  if $KUBECTL -n kube-system patch daemonset kube-proxy --type=strategic -p '{"spec":{"template":{"spec":{"affinity":{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"node-role.kubernetes.io/edge","operator":"DoesNotExist"}]}]}}}}}}}' >> "$INSTALL_LOG" 2>&1; then
+    echo "  ✓ Patched kube-proxy to exclude edge nodes." | tee -a "$INSTALL_LOG"
+  else
+    echo "  ⚠ Failed to patch kube-proxy (may already be configured)." | tee -a "$INSTALL_LOG"
+  fi
+else
+  echo "  ℹ kube-proxy DaemonSet not found (k3s may not deploy it); skipping." | tee -a "$INSTALL_LOG"
 fi
 
 echo "" | tee -a "$INSTALL_LOG"
