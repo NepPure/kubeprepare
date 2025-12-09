@@ -34,8 +34,9 @@
 - 通过 edgeStream 模块内部通信
 
 #### iptables-manager (云端 DaemonSet)
-- 自动管理 iptables 规则
-- 将发往边缘节点 `EdgeNodeIP:10351` 的流量 DNAT 到 CloudCore 的 `streamPort:10003`
+- **自动部署**：由 `keadm init` 或 Helm 自动创建，无需手动部署
+- **职责**：自动管理 iptables 规则
+- **功能**：将发往边缘节点 `EdgeNodeIP:10351` 的流量 DNAT 到 CloudCore 的 `streamPort:10003`
 
 ---
 
@@ -230,7 +231,29 @@ modules:
 
 ### 3.3 iptables-manager 配置
 
-#### 方式一：使用 Helm 自动部署 (推荐)
+**说明**：iptables-manager 通常由 `keadm init` 或 Helm 自动部署，无需手动干预。
+
+#### 验证 iptables-manager 是否已部署
+
+```bash
+# 检查 iptables-manager Pod
+kubectl get pods -n kubeedge -l k8s-app=iptables-manager
+
+# 应该看到类似：
+# NAME                             READY   STATUS    RESTARTS   AGE
+# cloud-iptables-manager-xxxxx     1/1     Running   0          10h
+```
+
+#### 方式一：使用 keadm init 自动部署（默认）
+
+使用 `keadm init` 命令初始化 CloudCore 时，会自动创建 iptables-manager DaemonSet：
+
+```bash
+keadm init --advertise-address=<云端IP> --kubeedge-version=v1.22.0
+# iptables-manager 会自动部署在云端节点
+```
+
+#### 方式二：使用 Helm 部署（可自定义配置）
 
 ```bash
 helm install cloudcore kubeedge/cloudcore \
@@ -239,7 +262,7 @@ helm install cloudcore kubeedge/cloudcore \
   --namespace kubeedge
 ```
 
-#### 方式二：手动部署 iptables-manager DaemonSet
+#### 方式三：手动部署 iptables-manager DaemonSet（仅在未自动部署时）
 
 ```yaml
 apiVersion: apps/v1
@@ -497,7 +520,8 @@ ssh edge-node "systemctl restart edgecore"
 
 3. **iptables 规则存在冗余和错误**
    - OUTPUT 链有重复规则
-   - TUNNEL-PORT 链有错误的 fallback 规则
+   - TUNNEL-PORT 链有错误的 fallback 规则：`to:10.2.4.15:10003`（应该是 `to:10.2.0.12:10003`）
+   - 这个错误规则可能是 iptables-manager 的 bug 或配置问题
 
 ---
 
@@ -522,24 +546,30 @@ ssh root@154.8.209.41 "ss -tlnp | grep edgecore"
 
 ### 8.2 清理和重建 iptables 规则
 
+**注意**：iptables-manager 由 `keadm init` 自动部署，通常会自动管理规则。但如果规则有误，可以手动重建：
+
 ```bash
 # 在 Cloud 节点执行
 
-# 1. 清理所有 TUNNEL-PORT 规则
+# 1. 检查当前 iptables-manager 状态
+kubectl get pods -n kubeedge -l k8s-app=iptables-manager
+
+# 2. 清理所有 TUNNEL-PORT 规则
 iptables -t nat -F TUNNEL-PORT
 
-# 2. 删除 OUTPUT 链中的重复规则
+# 3. 删除 OUTPUT 链中的重复规则
 iptables -t nat -D OUTPUT -d 10.2.4.15 -p tcp --dport 10351 -j DNAT --to-destination 10.2.0.12:10003 2>/dev/null || true
 iptables -t nat -D OUTPUT -d 10.2.4.15 -p tcp --dport 10351 -j DNAT --to-destination 10.43.113.225:10003 2>/dev/null || true
 
-# 3. 重启 iptables-manager，让它重新创建规则
+# 4. 重启 iptables-manager，让它重新创建规则
 kubectl delete pod -n kubeedge -l k8s-app=iptables-manager
 
-# 4. 等待 iptables-manager 重新创建规则（约 10 秒）
-sleep 10
+# 5. 等待 iptables-manager 重新创建规则（约 10-30 秒）
+sleep 30
 
-# 5. 验证规则
+# 6. 验证规则是否正确
 iptables -t nat -L TUNNEL-PORT -n -v
+# 应该只看到正确的 DNAT 规则：10.2.4.15:10351 → 10.2.0.12:10003
 ```
 
 ### 8.3 测试修复结果
