@@ -8,7 +8,7 @@ set -euo pipefail
 
 
 if [ "$EUID" -ne 0 ]; then
-  echo "错误：此脚本需要使用 root 或 sudo 运行"
+  echo "错误：此脚本需要使用 root 或 sudo 运行" | tee -a "$INSTALL_LOG"
   exit 1
 fi
 
@@ -21,15 +21,15 @@ INSTALL_LOG="/var/log/kubeedge-edge-install.log"
 
 # 验证参数
 if [ -z "$CLOUD_ADDRESS" ] || [ -z "$EDGE_TOKEN" ] || [ -z "$NODE_NAME" ]; then
-  echo "错误：缺少必需的参数"
-  echo "用法: sudo ./install.sh <云端地址> <token> <节点名称>"
-  echo "示例: sudo ./install.sh 192.168.1.100:10000 <token> edge-node-1"
+  echo "错误：缺少必需的参数" | tee -a "$INSTALL_LOG"
+  echo "用法: sudo ./install.sh <云端地址> <token> <节点名称>" | tee -a "$INSTALL_LOG"
+  echo "示例: sudo ./install.sh 192.168.1.100:10000 <token> edge-node-1" | tee -a "$INSTALL_LOG"
   exit 1
 fi
 
 # 校验 nodename 合法性（小写、字母数字、-、.，且首尾为字母数字）
 if ! [[ "$NODE_NAME" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$ ]]; then
-  echo "错误：节点名称 '$NODE_NAME' 不符合 RFC 1123 规范，必须为小写字母、数字、'-'或'.'，且首尾为字母数字。"
+  echo "错误：节点名称 '$NODE_NAME' 不符合 RFC 1123 规范，必须为小写字母、数字、'-'或'.'，且首尾为字母数字。" | tee -a "$INSTALL_LOG"
   exit 1
 fi
 
@@ -43,7 +43,7 @@ case "$ARCH" in
     ARCH="arm64"
     ;;
   *)
-    echo "错误：不支持的架构: $ARCH"
+    echo "错误：不支持的架构: $ARCH" | tee -a "$INSTALL_LOG"
     exit 1
     ;;
 esac
@@ -150,6 +150,7 @@ if [ -z "$EDGECORE_BIN" ] || [ -z "$KEADM_BIN" ]; then
   echo "Error: Required binaries not found in $SCRIPT_DIR" | tee -a "$INSTALL_LOG"
   echo "  edgecore: $EDGECORE_BIN" | tee -a "$INSTALL_LOG"
   echo "  keadm: $KEADM_BIN" | tee -a "$INSTALL_LOG"
+  echo "❌ 安装失败，缺少必要二进制文件。请检查离线包内容。" | tee -a "$INSTALL_LOG"
   exit 1
 fi
 echo "✓ Binaries located" | tee -a "$INSTALL_LOG"
@@ -159,6 +160,7 @@ echo "[2/6] Checking prerequisites..." | tee -a "$INSTALL_LOG"
 for cmd in systemctl; do
   if ! command -v "$cmd" &> /dev/null; then
     echo "Error: $cmd not found. Cannot continue." | tee -a "$INSTALL_LOG"
+    echo "❌ 安装失败，缺少系统命令 $cmd。" | tee -a "$INSTALL_LOG"
     exit 1
   fi
 done
@@ -194,6 +196,7 @@ else
     echo "✓ containerd binaries installed" | tee -a "$INSTALL_LOG"
   else
     echo "Error: containerd not found in offline package" | tee -a "$INSTALL_LOG"
+    echo "❌ 安装失败，离线包缺少 containerd。" | tee -a "$INSTALL_LOG"
     exit 1
   fi
 
@@ -315,6 +318,7 @@ if [ -n "$RUNC_BIN" ] && [ -f "$RUNC_BIN" ]; then
   echo "✓ runc installed" | tee -a "$INSTALL_LOG"
 else
   echo "Error: runc not found in offline package" | tee -a "$INSTALL_LOG"
+  echo "❌ 安装失败，离线包缺少 runc。" | tee -a "$INSTALL_LOG"
   exit 1
 fi
 
@@ -523,6 +527,7 @@ echo "  Preparing for edge node join..." | tee -a "$INSTALL_LOG"
 KEADM_BIN=$(find "$SCRIPT_DIR" -name "keadm" -type f 2>/dev/null | head -1)
 if [ -z "$KEADM_BIN" ]; then
   echo "Error: keadm not found in offline package" | tee -a "$INSTALL_LOG"
+  echo "❌ 安装失败，离线包缺少 keadm。" | tee -a "$INSTALL_LOG"
   exit 1
 fi
 
@@ -575,7 +580,7 @@ if /usr/local/bin/keadm join \
   echo "  ✓ EdgeCore configuration generated at /etc/kubeedge/config/edgecore.yaml" | tee -a "$INSTALL_LOG"
 else
   echo "  Error: keadm join failed" | tee -a "$INSTALL_LOG"
-  echo "  Check $INSTALL_LOG for details" | tee -a "$INSTALL_LOG"
+  echo "❌ 安装失败，keadm join 执行失败。请检查云端地址、token、网络连通性及日志 $INSTALL_LOG。" | tee -a "$INSTALL_LOG"
   exit 1
 fi
 
