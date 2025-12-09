@@ -140,6 +140,7 @@ Wants=network-online.target
 [Service]
 Type=notify
 ExecStart=/usr/local/bin/k3s server \\
+  --egress-selector-mode=disabled \\
   --advertise-address=$EXTERNAL_IP \\
   --node-name=$NODE_NAME \\
   --tls-san=$EXTERNAL_IP \\
