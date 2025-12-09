@@ -237,6 +237,8 @@ jobs:
           if [ -d "$MANIFESTS_DIR" ]; then
             cp -r "$MANIFESTS_DIR" "$TEMP_PKG_DIR/"
             echo "✓ 已包含 manifests 目录（Metrics Server 部署清单、iptables 配置脚本和验证脚本）"
+          else
+            echo "ℹ 未检测到 manifests 目录，跳过包含（这不会影响安装流程）"
           fi
           
           # 创建 README

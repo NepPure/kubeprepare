@@ -652,7 +652,15 @@ echo "   kubectl get deployment -n kube-system metrics-server -o yaml" | tee -a 
 echo "   kubectl top node  # 在边缘节点加入后可用" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 echo "4. 验证日志与监控功能:" | tee -a "$INSTALL_LOG"
-echo "   sudo bash manifests/verify-logs-metrics.sh  # 自动检查所有功能" | tee -a "$INSTALL_LOG"
+if [ -f "$SCRIPT_DIR/manifests/verify-logs-metrics.sh" ]; then
+  echo "   sudo bash manifests/verify-logs-metrics.sh  # 自动检查所有功能" | tee -a "$INSTALL_LOG"
+else
+  echo "   提示: 未检测到 manifests/verify-logs-metrics.sh，可手动验证:" | tee -a "$INSTALL_LOG"
+  echo "     kubectl -n kubeedge get pod -l kubeedge=cloudcore" | tee -a "$INSTALL_LOG"
+  echo "     kubectl top node   # 边缘节点接入后" | tee -a "$INSTALL_LOG"
+  echo "     选一个边缘 Pod: kubectl logs -n <ns> <pod> --tail=10" | tee -a "$INSTALL_LOG"
+  echo "     kubectl exec -n <ns> <pod> -- echo ok" | tee -a "$INSTALL_LOG"
+fi
 echo "" | tee -a "$INSTALL_LOG"
 echo "5. To connect an edge node:" | tee -a "$INSTALL_LOG"
 echo "   - Use cloud IP: $CLOUD_IP" | tee -a "$INSTALL_LOG"
