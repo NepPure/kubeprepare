@@ -150,6 +150,7 @@ ExecStart=/usr/local/bin/k3s server \\
   --cluster-dns=10.43.0.10 \\
   --kube-apiserver-arg=bind-address=0.0.0.0 \\
   --kube-apiserver-arg=advertise-address=$EXTERNAL_IP \\
+  --kube-apiserver-arg=kubelet-certificate-authority= \\
   --kube-controller-manager-arg=bind-address=0.0.0.0 \\
   --kube-controller-manager-arg=node-cidr-mask-size=24 \\
   --kube-scheduler-arg=bind-address=0.0.0.0
