@@ -58,7 +58,7 @@ jobs:
           
           # 定义版本号（全局复用）
           echo "KUBEEDGE_VERSION=1.22.0" >> $GITHUB_ENV
-          echo "CONTAINERD_VERSION=1.7.29" >> $GITHUB_ENV
+          echo "CONTAINERD_VERSION=2.2.0" >> $GITHUB_ENV
           echo "RUNC_VERSION=1.4.0" >> $GITHUB_ENV
           echo "CNI_VERSION=1.8.0" >> $GITHUB_ENV
           echo "EDGEMESH_VERSION=v1.17.0" >> $GITHUB_ENV
