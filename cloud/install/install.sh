@@ -2,31 +2,72 @@
 set -euo pipefail
 
 # KubeEdge 云端离线安装脚本
-# 用途: sudo ./install.sh <对外IP> [可选-节点名称]
-# 示例: sudo ./install.sh 192.168.1.100
-#       sudo ./install.sh 192.168.1.100 k3s-master
+
+# 用途:
+#   1. 安装K3s主节点/云端: sudo ./install.sh <对外IP> [可选-节点名称]
+#   2. 安装K3s worker节点: sudo ./install.sh --worker <K3S_MASTER_IP>:<K3S_TOKEN> [可选-节点名称]
+# 示例:
+#   sudo ./install.sh 192.168.1.100
+#   sudo ./install.sh 192.168.1.100 k3s-master
+#   sudo ./install.sh --worker 192.168.1.100:K10abcdef... worker01
 
 if [ "$EUID" -ne 0 ]; then
   echo "错误：此脚本需要使用 root 或 sudo 运行"
   exit 1
 fi
 
-EXTERNAL_IP="${1:-}"
-NODE_NAME="${2:-k3s-master}"
+MODE="normal"
+EXTERNAL_IP=""
+K3S_MASTER_ADDR=""
+K3S_TOKEN=""
+NODE_NAME="k3s-master"
+
+if [ "${1:-}" = "--worker" ]; then
+  MODE="worker"
+  if [ -z "${2:-}" ]; then
+    echo "错误：worker模式下必须指定 <K3S_MASTER_IP>[:<PORT>]:<K3S_TOKEN>"
+    echo "用法: sudo ./install.sh --worker <K3S_MASTER_IP>[:<PORT>]:<K3S_TOKEN> [可选-节点名称]"
+    exit 1
+  fi
+  # 解析 master 地址和 token，支持带端口
+  MASTER_AND_TOKEN="${2}"
+  K3S_MASTER_ADDR_PORT="${MASTER_AND_TOKEN%:*}"
+  K3S_TOKEN="${MASTER_AND_TOKEN##*:}"
+  NODE_NAME="${3:-k3s-worker}"
+  # 检查是否带端口
+  if [[ "$K3S_MASTER_ADDR_PORT" == *:* ]]; then
+    K3S_MASTER_ADDR="${K3S_MASTER_ADDR_PORT%%:*}"
+    K3S_MASTER_PORT="${K3S_MASTER_ADDR_PORT##*:}"
+    # 如果端口不是数字，说明没带端口
+    if ! [[ "$K3S_MASTER_PORT" =~ ^[0-9]+$ ]]; then
+      K3S_MASTER_ADDR="$K3S_MASTER_ADDR_PORT"
+      K3S_MASTER_PORT="6443"
+    fi
+  else
+    K3S_MASTER_ADDR="$K3S_MASTER_ADDR_PORT"
+    K3S_MASTER_PORT="6443"
+  fi
+else
+  EXTERNAL_IP="${1:-}"
+  NODE_NAME="${2:-k3s-master}"
+fi
 KUBEEDGE_VERSION="1.22.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_LOG="/var/log/kubeedge-cloud-install.log"
 
-# 验证外网 IP
-if [ -z "$EXTERNAL_IP" ]; then
-  echo "错误：外网 IP 地址是必需的"
-  echo "用法: sudo ./install.sh <对外IP> [可选-节点名称]"
-  exit 1
-fi
 
-if ! [[ "$EXTERNAL_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-  echo "错误：无效的 IP 地址: $EXTERNAL_IP"
-  exit 1
+# 参数校验
+if [ "$MODE" = "normal" ]; then
+  # 验证外网 IP
+  if [ -z "$EXTERNAL_IP" ]; then
+    echo "错误：外网 IP 地址是必需的"
+    echo "用法: sudo ./install.sh <对外IP> [可选-节点名称]"
+    exit 1
+  fi
+  if ! [[ "$EXTERNAL_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    echo "错误：无效的 IP 地址: $EXTERNAL_IP"
+    exit 1
+  fi
 fi
 
 # 检测系统架构
@@ -44,41 +85,68 @@ case "$ARCH" in
     ;;
 esac
 
-echo "=== KubeEdge 云端离线安装脚本 ===" | tee "$INSTALL_LOG"
+
+echo "=== KubeEdge 云端/worker离线安装脚本 ===" | tee "$INSTALL_LOG"
 echo "架构: $ARCH" | tee -a "$INSTALL_LOG"
-echo "对外 IP: $EXTERNAL_IP" | tee -a "$INSTALL_LOG"
+if [ "$MODE" = "normal" ]; then
+  echo "对外 IP: $EXTERNAL_IP" | tee -a "$INSTALL_LOG"
+else
+  echo "worker模式: master=$K3S_MASTER_ADDR, token=$K3S_TOKEN" | tee -a "$INSTALL_LOG"
+fi
 echo "节点名称: $NODE_NAME" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 
-# Check for existing components
-echo "[0/7] Checking for existing components..." | tee -a "$INSTALL_LOG"
 
-HAS_K3S=false
-HAS_DOCKER=false
-
-if [ -f /usr/local/bin/k3s ] || systemctl list-units --full -all 2>/dev/null | grep -q "k3s.service"; then
-  HAS_K3S=true
-  echo "⚠️  警告: 检测到系统已安装 K3s" | tee -a "$INSTALL_LOG"
-  echo "   现有 K3s 安装位置: /usr/local/bin/k3s" | tee -a "$INSTALL_LOG"
-  echo "   如需重新安装，请先运行清理脚本: sudo ./cleanup.sh" | tee -a "$INSTALL_LOG"
-  echo "" | tee -a "$INSTALL_LOG"
-  read -p "是否继续？这将覆盖现有安装 (y/N): " -n 1 -r
-  echo ""
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "❌ 用户取消安装" | tee -a "$INSTALL_LOG"
+# worker模式只做worker节点安装
+if [ "$MODE" = "worker" ]; then
+  echo "[worker] 离线安装K3s worker节点..." | tee -a "$INSTALL_LOG"
+  K3S_BIN=$(find "$SCRIPT_DIR" -name "k3s-${ARCH}" -type f 2>/dev/null | head -1)
+  if [ -z "$K3S_BIN" ]; then
+    echo "Error: k3s-${ARCH} binary not found in $SCRIPT_DIR" | tee -a "$INSTALL_LOG"
     exit 1
   fi
-fi
+  cp "$K3S_BIN" /usr/local/bin/k3s
+  chmod +x /usr/local/bin/k3s
+  # 创建k3s-agent服务，支持自定义端口
+  cat > /etc/systemd/system/k3s-agent.service << EOF
+[Unit]
+Description=Lightweight Kubernetes Agent
+After=network-online.target
+Wants=network-online.target
 
-if systemctl list-units --full -all 2>/dev/null | grep -q "docker.service" || command -v docker &> /dev/null; then
-  HAS_DOCKER=true
-  echo "⚠️  警告: 检测到系统已安装 Docker" | tee -a "$INSTALL_LOG"
-  echo "   Docker 与 K3s 可以共存，但它们使用不同的 containerd" | tee -a "$INSTALL_LOG"
-  echo "   K3s 有自己内置的 containerd，不会影响 Docker" | tee -a "$INSTALL_LOG"
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/k3s agent \\
+  --server https://$K3S_MASTER_ADDR:$K3S_MASTER_PORT \\
+  --token $K3S_TOKEN \\
+  --node-name=$NODE_NAME
+KillMode=process
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=k3s-agent
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable k3s-agent
+  systemctl restart k3s-agent
+
+  echo "✓ K3s worker节点已安装并启动" | tee -a "$INSTALL_LOG"
   echo "" | tee -a "$INSTALL_LOG"
+  echo "=== Worker节点加入K3s集群信息 ===" | tee -a "$INSTALL_LOG"
+  echo "Master地址: $K3S_MASTER_ADDR"
+  echo "端口: $K3S_MASTER_PORT"
+  echo "Token: $K3S_TOKEN"
+  echo "节点名称: $NODE_NAME"
+  echo "" | tee -a "$INSTALL_LOG"
+  echo "如需重新加入，请执行:"
+  echo "  sudo ./install.sh --worker $K3S_MASTER_ADDR:$K3S_MASTER_PORT:$K3S_TOKEN $NODE_NAME"
+  exit 0
 fi
-
-echo "✓ Component check completed" | tee -a "$INSTALL_LOG"
 
 # Find k3s and keadm binaries
 echo "[1/7] Locating binaries..." | tee -a "$INSTALL_LOG"
@@ -449,6 +517,7 @@ chmod 600 "$TOKEN_FILE"
 echo "✓ Edge token generated" | tee -a "$INSTALL_LOG"
 
 echo "" | tee -a "$INSTALL_LOG"
+
 echo "=== Installation completed successfully ===" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 echo "=== CloudCore Information ===" | tee -a "$INSTALL_LOG"
@@ -458,6 +527,22 @@ echo "" | tee -a "$INSTALL_LOG"
 echo "=== Edge Connection Token ===" | tee -a "$INSTALL_LOG"
 echo "Token: $EDGE_TOKEN" | tee -a "$INSTALL_LOG"
 echo "Save this token for edge node installation" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a "$INSTALL_LOG"
+echo "【K3s worker 节点加入命令】" | tee -a "$INSTALL_LOG"
+K3S_TOKEN_VALUE=""
+if [ -f /var/lib/rancher/k3s/server/node-token ]; then
+  K3S_TOKEN_VALUE=$(cat /var/lib/rancher/k3s/server/node-token)
+  echo "K3S_TOKEN: $K3S_TOKEN_VALUE" | tee -a "$INSTALL_LOG"
+else
+  echo "K3S_TOKEN: <未找到 /var/lib/rancher/k3s/server/node-token 文件>" | tee -a "$INSTALL_LOG"
+fi
+echo "sudo ./install.sh --worker $EXTERNAL_IP:6443:$K3S_TOKEN_VALUE <worker节点名称>" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "【KubeEdge edge 节点加入命令】" | tee -a "$INSTALL_LOG"
+echo "sudo ./install.sh $CLOUD_IP:$CLOUD_PORT '$EDGE_TOKEN' <edge节点名称>" | tee -a "$INSTALL_LOG"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
 
 # =====================================
 # 6.8. Patch K3s Built-in Metrics Server for KubeEdge
