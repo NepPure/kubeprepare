@@ -5,11 +5,11 @@ set -euo pipefail
 
 # 用途:
 #   1. 安装K3s主节点/云端: sudo ./install.sh <对外IP> [可选-节点名称]
-#   2. 安装K3s worker节点: sudo ./install.sh --worker <K3S_MASTER_IP>:<K3S_TOKEN> [可选-节点名称]
+#   2. 安装K3s worker节点: sudo ./install.sh --worker <K3S_MASTER_IP>[:PORT] <K3S_TOKEN> [可选-节点名称]
 # 示例:
 #   sudo ./install.sh 192.168.1.100
 #   sudo ./install.sh 192.168.1.100 k3s-master
-#   sudo ./install.sh --worker 192.168.1.100:K10abcdef... worker01
+#   sudo ./install.sh --worker 192.168.1.100 K10abcdef... worker01
 
 if [ "$EUID" -ne 0 ]; then
   echo "错误：此脚本需要使用 root 或 sudo 运行"
@@ -24,16 +24,15 @@ NODE_NAME="k3s-master"
 
 if [ "${1:-}" = "--worker" ]; then
   MODE="worker"
-  if [ -z "${2:-}" ]; then
-    echo "错误：worker模式下必须指定 <K3S_MASTER_IP>[:<PORT>]:<K3S_TOKEN>"
-    echo "用法: sudo ./install.sh --worker <K3S_MASTER_IP>[:<PORT>]:<K3S_TOKEN> [可选-节点名称]"
+  # worker模式下不赋值 EXTERNAL_IP
+  if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
+    echo "错误：worker模式下必须指定 <K3S_MASTER_IP>[:PORT] <K3S_TOKEN>"
+    echo "用法: sudo ./install.sh --worker <K3S_MASTER_IP>[:PORT] <K3S_TOKEN> [可选-节点名称]"
     exit 1
   fi
-  # 解析 master 地址和 token，支持带端口
-  MASTER_AND_TOKEN="${2}"
-  K3S_MASTER_ADDR_PORT="${MASTER_AND_TOKEN%:*}"
-  K3S_TOKEN="${MASTER_AND_TOKEN##*:}"
-  NODE_NAME="${3:-k3s-worker}"
+  K3S_MASTER_ADDR_PORT="${2}"
+  K3S_TOKEN="${3}"
+  NODE_NAME="${4:-k3s-worker}"
   # 检查是否带端口
   if [[ "$K3S_MASTER_ADDR_PORT" == *:* ]]; then
     K3S_MASTER_ADDR="${K3S_MASTER_ADDR_PORT%%:*}"
@@ -51,10 +50,10 @@ else
   EXTERNAL_IP="${1:-}"
   NODE_NAME="${2:-k3s-master}"
 fi
+
 KUBEEDGE_VERSION="1.22.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_LOG="/var/log/kubeedge-cloud-install.log"
-
 
 # 参数校验
 if [ "$MODE" = "normal" ]; then
@@ -85,7 +84,6 @@ case "$ARCH" in
     ;;
 esac
 
-
 echo "=== KubeEdge 云端/worker离线安装脚本 ===" | tee "$INSTALL_LOG"
 echo "架构: $ARCH" | tee -a "$INSTALL_LOG"
 if [ "$MODE" = "normal" ]; then
@@ -96,18 +94,154 @@ fi
 echo "节点名称: $NODE_NAME" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 
+# =====================================
+# 公共函数定义
+# =====================================
 
-# worker模式只做worker节点安装
-if [ "$MODE" = "worker" ]; then
-  echo "[worker] 离线安装K3s worker节点..." | tee -a "$INSTALL_LOG"
-  K3S_BIN=$(find "$SCRIPT_DIR" -name "k3s-${ARCH}" -type f 2>/dev/null | head -1)
-  if [ -z "$K3S_BIN" ]; then
-    echo "Error: k3s-${ARCH} binary not found in $SCRIPT_DIR" | tee -a "$INSTALL_LOG"
-    exit 1
+# 函数: 检查K3s服务是否已启动
+check_k3s_running() {
+  local max_wait="${1:-30}"
+  local wait_interval="${2:-2}"
+  
+  echo "检查K3s服务是否已启动 (最多等待 ${max_wait} 秒)..." | tee -a "$INSTALL_LOG"
+  
+  for i in $(seq 1 "$max_wait"); do
+    if command -v k3s &>/dev/null; then
+      if k3s kubectl cluster-info &>/dev/null 2>&1; then
+        echo "✓ K3s服务已启动并运行正常" | tee -a "$INSTALL_LOG"
+        return 0
+      fi
+    fi
+    echo "等待K3s服务启动... (${i}/${max_wait})" | tee -a "$INSTALL_LOG"
+    sleep "$wait_interval"
+  done
+  
+  echo "✗ K3s服务启动超时或运行异常" | tee -a "$INSTALL_LOG"
+  return 1
+}
+
+# 函数: 加载镜像到K3s containerd
+load_images_to_k3s() {
+  local images_dir="$1"
+  local mode="$2"  # master 或 worker
+  
+  echo "导入镜像到本地 k3s containerd ($mode模式)..." | tee -a "$INSTALL_LOG"
+  
+  if [ ! -d "$images_dir" ]; then
+    echo "警告: 镜像目录不存在: $images_dir" | tee -a "$INSTALL_LOG"
+    echo "跳过镜像导入" | tee -a "$INSTALL_LOG"
+    return 1
   fi
-  cp "$K3S_BIN" /usr/local/bin/k3s
+  
+  local image_count=$(find "$images_dir" -name "*.tar" -type f 2>/dev/null | wc -l)
+  if [ "$image_count" -eq 0 ]; then
+    echo "警告: 镜像目录中没有找到 .tar 文件: $images_dir" | tee -a "$INSTALL_LOG"
+    echo "跳过镜像导入" | tee -a "$INSTALL_LOG"
+    return 1
+  fi
+  
+  echo "找到 $image_count 个镜像文件" | tee -a "$INSTALL_LOG"
+  
+  local loaded_count=0
+  local failed_count=0
+  
+  # 导入所有镜像
+  for image_tar in "$images_dir"/*.tar; do
+    if [ -f "$image_tar" ]; then
+      local image_name=$(basename "$image_tar")
+      echo "  导入: $image_name" | tee -a "$INSTALL_LOG"
+      
+      if k3s ctr images import "$image_tar" >> "$INSTALL_LOG" 2>&1; then
+        loaded_count=$((loaded_count + 1))
+        echo "    ✓ 成功" | tee -a "$INSTALL_LOG"
+      else
+        failed_count=$((failed_count + 1))
+        echo "    ✗ 失败" | tee -a "$INSTALL_LOG"
+      fi
+    fi
+  done
+  
+  # 验证已加载的镜像
+  echo "镜像导入完成: $loaded_count 成功, $failed_count 失败" | tee -a "$INSTALL_LOG"
+  
+  if [ "$loaded_count" -gt 0 ]; then
+    echo "验证已加载的镜像列表:" | tee -a "$INSTALL_LOG"
+    k3s ctr images ls -q | while read -r image; do
+      echo "  $image" | tee -a "$INSTALL_LOG"
+    done
+  fi
+  
+  return $((failed_count > 0 ? 1 : 0))
+}
+
+# 函数: 预加载KubeEdge特定镜像
+preload_kubeedge_images() {
+  local images_dir="$1"
+  
+  echo "预加载KubeEdge组件镜像..." | tee -a "$INSTALL_LOG"
+  
+  if [ ! -d "$images_dir" ]; then
+    echo "警告: 镜像目录不存在: $images_dir" | tee -a "$INSTALL_LOG"
+    return 1
+  fi
+  
+  local kubeedge_count=0
+  
+  # 查找并导入所有KubeEdge相关镜像
+  for image_tar in "$images_dir"/docker.io-kubeedge-*.tar; do
+    if [ -f "$image_tar" ]; then
+      local image_name=$(basename "$image_tar")
+      echo "  预加载KubeEdge镜像: $image_name" | tee -a "$INSTALL_LOG"
+      
+      if k3s ctr images import "$image_tar" >> "$INSTALL_LOG" 2>&1; then
+        kubeedge_count=$((kubeedge_count + 1))
+        echo "    ✓ 成功" | tee -a "$INSTALL_LOG"
+      else
+        echo "    ✗ 失败" | tee -a "$INSTALL_LOG"
+      fi
+    fi
+  done
+  
+  # 同时查找其他可能的KubeEdge镜像命名模式
+  for image_tar in "$images_dir"/*kubeedge*.tar; do
+    if [ -f "$image_tar" ] && [[ ! "$image_tar" == *docker.io-kubeedge-* ]]; then
+      local image_name=$(basename "$image_tar")
+      echo "  预加载KubeEdge镜像: $image_name" | tee -a "$INSTALL_LOG"
+      
+      if k3s ctr images import "$image_tar" >> "$INSTALL_LOG" 2>&1; then
+        kubeedge_count=$((kubeedge_count + 1))
+        echo "    ✓ 成功" | tee -a "$INSTALL_LOG"
+      else
+        echo "    ✗ 失败" | tee -a "$INSTALL_LOG"
+      fi
+    fi
+  done
+  
+  if [ "$kubeedge_count" -gt 0 ]; then
+    echo "✓ 预加载 $kubeedge_count 个KubeEdge镜像" | tee -a "$INSTALL_LOG"
+    echo "验证KubeEdge镜像:" | tee -a "$INSTALL_LOG"
+    k3s ctr images ls | grep -i kubeedge | tee -a "$INSTALL_LOG"
+  else
+    echo "警告: 没有找到KubeEdge镜像" | tee -a "$INSTALL_LOG"
+  fi
+}
+
+# 函数: 安装K3s worker节点
+install_k3s_worker() {
+  local k3s_bin="$1"
+  local k3s_master_addr="$2"
+  local k3s_master_port="$3"
+  local k3s_token="$4"
+  local node_name="$5"
+  local script_dir="$6"
+  
+  echo "离线安装K3s worker节点..." | tee -a "$INSTALL_LOG"
+  
+  # 安装k3s二进制文件
+  cp "$k3s_bin" /usr/local/bin/k3s
   chmod +x /usr/local/bin/k3s
-  # 创建k3s-agent服务，支持自定义端口
+  
+  # 创建k3s-agent服务
   cat > /etc/systemd/system/k3s-agent.service << EOF
 [Unit]
 Description=Lightweight Kubernetes Agent
@@ -117,9 +251,9 @@ Wants=network-online.target
 [Service]
 Type=notify
 ExecStart=/usr/local/bin/k3s agent \\
-  --server https://$K3S_MASTER_ADDR:$K3S_MASTER_PORT \\
-  --token $K3S_TOKEN \\
-  --node-name=$NODE_NAME
+  --server https://$k3s_master_addr:$k3s_master_port \\
+  --token $k3s_token \\
+  --node-name=$node_name
 KillMode=process
 Restart=always
 RestartSec=5
@@ -134,70 +268,108 @@ EOF
   systemctl daemon-reload
   systemctl enable k3s-agent
   systemctl restart k3s-agent
+  
+  # 等待k3s-agent启动
+  echo "等待K3s worker节点启动..." | tee -a "$INSTALL_LOG"
+  for i in {1..30}; do
+    if systemctl is-active --quiet k3s-agent; then
+      echo "✓ K3s worker节点已启动" | tee -a "$INSTALL_LOG"
+      break
+    fi
+    echo "等待... ($i/30)" | tee -a "$INSTALL_LOG"
+    sleep 2
+  done
+  
+  # 检查k3s-agent状态
+  if ! systemctl is-active --quiet k3s-agent; then
+    echo "错误: K3s worker节点启动失败" | tee -a "$INSTALL_LOG"
+    systemctl status k3s-agent >> "$INSTALL_LOG" 2>&1 || true
+    return 1
+  fi
+  
+  # 加载镜像
+  local images_dir=$(find "$script_dir" -type d -name "images" 2>/dev/null | head -1)
+  if check_k3s_running 30 2; then
+    load_images_to_k3s "$images_dir" "worker"
+    preload_kubeedge_images "$images_dir"
+  else
+    echo "警告: K3s服务未运行，无法加载镜像" | tee -a "$INSTALL_LOG"
+  fi
+  
+  return 0
+}
 
-  echo "✓ K3s worker节点已安装并启动" | tee -a "$INSTALL_LOG"
-  echo "" | tee -a "$INSTALL_LOG"
-  echo "=== Worker节点加入K3s集群信息 ===" | tee -a "$INSTALL_LOG"
-  echo "Master地址: $K3S_MASTER_ADDR"
-  echo "端口: $K3S_MASTER_PORT"
-  echo "Token: $K3S_TOKEN"
-  echo "节点名称: $NODE_NAME"
-  echo "" | tee -a "$INSTALL_LOG"
-  echo "如需重新加入，请执行:"
-  echo "  sudo ./install.sh --worker $K3S_MASTER_ADDR:$K3S_MASTER_PORT:$K3S_TOKEN $NODE_NAME"
+# =====================================
+# 主程序逻辑
+# =====================================
+
+# worker模式只做worker节点安装
+if [ "$MODE" = "worker" ]; then
+  echo "=== K3s Worker节点安装模式 ===" | tee -a "$INSTALL_LOG"
+  
+  # 查找k3s二进制文件
+  K3S_BIN=$(find "$SCRIPT_DIR" -name "k3s-${ARCH}" -type f 2>/dev/null | head -1)
+  if [ -z "$K3S_BIN" ]; then
+    echo "错误: 未找到 k3s-${ARCH} 二进制文件在 $SCRIPT_DIR" | tee -a "$INSTALL_LOG"
+    exit 1
+  fi
+  
+  # 安装worker节点
+  if install_k3s_worker "$K3S_BIN" "$K3S_MASTER_ADDR" "$K3S_MASTER_PORT" "$K3S_TOKEN" "$NODE_NAME" "$SCRIPT_DIR"; then
+    echo "" | tee -a "$INSTALL_LOG"
+    echo "=== Worker节点加入K3s集群信息 ===" | tee -a "$INSTALL_LOG"
+    echo "Master地址: $K3S_MASTER_ADDR" | tee -a "$INSTALL_LOG"
+    echo "端口: $K3S_MASTER_PORT" | tee -a "$INSTALL_LOG"
+    echo "Token: $K3S_TOKEN" | tee -a "$INSTALL_LOG"
+    echo "节点名称: $NODE_NAME" | tee -a "$INSTALL_LOG"
+    echo "" | tee -a "$INSTALL_LOG"
+    echo "如需重新加入，请执行:" | tee -a "$INSTALL_LOG"
+    echo "  sudo ./install.sh --worker $K3S_MASTER_ADDR:$K3S_MASTER_PORT $K3S_TOKEN $NODE_NAME" | tee -a "$INSTALL_LOG"
+    echo "" | tee -a "$INSTALL_LOG"
+    echo "✓ K3s worker节点安装完成" | tee -a "$INSTALL_LOG"
+  else
+    echo "✗ K3s worker节点安装失败" | tee -a "$INSTALL_LOG"
+    exit 1
+  fi
+  
   exit 0
 fi
 
-# Find k3s and keadm binaries
-echo "[1/7] Locating binaries..." | tee -a "$INSTALL_LOG"
+# =====================================
+# Master/Cloud 安装模式
+# =====================================
+
+echo "=== KubeEdge Cloud/Master 安装模式 ===" | tee -a "$INSTALL_LOG"
+
+# 步骤1: 定位二进制文件
+echo "[1/10] 定位二进制文件..." | tee -a "$INSTALL_LOG"
 K3S_BIN=$(find "$SCRIPT_DIR" -name "k3s-${ARCH}" -type f 2>/dev/null | head -1)
 CLOUDCORE_BIN=$(find "$SCRIPT_DIR" -name "cloudcore" -type f 2>/dev/null | head -1)
 KEADM_BIN=$(find "$SCRIPT_DIR" -name "keadm" -type f 2>/dev/null | head -1)
 
 if [ -z "$K3S_BIN" ] || [ -z "$CLOUDCORE_BIN" ] || [ -z "$KEADM_BIN" ]; then
-  echo "Error: Required binaries not found in $SCRIPT_DIR" | tee -a "$INSTALL_LOG"
+  echo "错误: 在 $SCRIPT_DIR 中未找到必需的二进制文件" | tee -a "$INSTALL_LOG"
   echo "  k3s-${ARCH}: $K3S_BIN" | tee -a "$INSTALL_LOG"
   echo "  cloudcore: $CLOUDCORE_BIN" | tee -a "$INSTALL_LOG"
   echo "  keadm: $KEADM_BIN" | tee -a "$INSTALL_LOG"
   exit 1
 fi
-echo "✓ Binaries located" | tee -a "$INSTALL_LOG"
+echo "✓ 二进制文件已定位" | tee -a "$INSTALL_LOG"
 
-# Check prerequisites
-echo "[2/7] Checking prerequisites..." | tee -a "$INSTALL_LOG"
+# 步骤2: 检查先决条件
+echo "[2/10] 检查先决条件..." | tee -a "$INSTALL_LOG"
 if ! command -v systemctl &> /dev/null; then
-  echo "Error: systemctl not found. This script requires systemd." | tee -a "$INSTALL_LOG"
+  echo "错误: 未找到 systemctl。此脚本需要 systemd。" | tee -a "$INSTALL_LOG"
   exit 1
 fi
-echo "✓ Prerequisites checked" | tee -a "$INSTALL_LOG"
+echo "✓ 先决条件检查通过" | tee -a "$INSTALL_LOG"
 
-# Install k3s
-echo "[3/7] Installing k3s..." | tee -a "$INSTALL_LOG"
+# 步骤3: 安装k3s
+echo "[3/10] 安装k3s..." | tee -a "$INSTALL_LOG"
 cp "$K3S_BIN" /usr/local/bin/k3s
 chmod +x /usr/local/bin/k3s
 
-# Load container images before starting k3s
-echo "[3/7-a] Loading container images..." | tee -a "$INSTALL_LOG"
-IMAGES_DIR=$(find "$SCRIPT_DIR" -type d -name "images" 2>/dev/null | head -1)
-if [ -d "$IMAGES_DIR" ]; then
-  IMAGE_COUNT=0
-  for image_tar in "$IMAGES_DIR"/*.tar; do
-    if [ -f "$image_tar" ]; then
-      echo "  Loading: $(basename "$image_tar")" | tee -a "$INSTALL_LOG"
-      # We'll load images after k3s starts using ctr
-      IMAGE_COUNT=$((IMAGE_COUNT + 1))
-    fi
-  done
-  if [ $IMAGE_COUNT -gt 0 ]; then
-    echo "✓ Found $IMAGE_COUNT images to load" | tee -a "$INSTALL_LOG"
-  else
-    echo "Warning: No image tar files found in $IMAGES_DIR" | tee -a "$INSTALL_LOG"
-  fi
-else
-  echo "Warning: Images directory not found in $SCRIPT_DIR" | tee -a "$INSTALL_LOG"
-fi
-
-# Create k3s service
+# 创建k3s服务
 cat > /etc/systemd/system/k3s.service << EOF
 [Unit]
 Description=Lightweight Kubernetes
@@ -237,160 +409,115 @@ systemctl daemon-reload
 systemctl enable k3s
 systemctl restart k3s
 
-# Wait for k3s to be ready
-echo "Waiting for k3s to be ready..." | tee -a "$INSTALL_LOG"
+# 等待k3s启动
+echo "等待k3s启动..." | tee -a "$INSTALL_LOG"
 for i in {1..30}; do
   if [ -f /etc/rancher/k3s/k3s.yaml ]; then
-    echo "✓ k3s is ready" | tee -a "$INSTALL_LOG"
+    echo "✓ k3s已启动" | tee -a "$INSTALL_LOG"
     break
   fi
-  echo "Waiting... ($i/30)" | tee -a "$INSTALL_LOG"
+  echo "等待... ($i/30)" | tee -a "$INSTALL_LOG"
   sleep 2
 done
 
 if [ ! -f /etc/rancher/k3s/k3s.yaml ]; then
-  echo "Error: k3s failed to start" | tee -a "$INSTALL_LOG"
+  echo "错误: k3s启动失败" | tee -a "$INSTALL_LOG"
   systemctl status k3s >> "$INSTALL_LOG" 2>&1 || true
   exit 1
 fi
 
-
-# Copy kubeconfig
+# 复制kubeconfig
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 chmod 644 /etc/rancher/k3s/k3s.yaml
 
 # 统一KUBECTL命令
 KUBECTL="/usr/local/bin/k3s kubectl"
 
-# Load container images into k3s containerd
-echo "[3/7-b] Importing container images into k3s..." | tee -a "$INSTALL_LOG"
-if [ -d "$IMAGES_DIR" ]; then
-  LOADED_COUNT=0
-  FAILED_COUNT=0
-  for image_tar in "$IMAGES_DIR"/*.tar; do
-    if [ -f "$image_tar" ]; then
-      echo "  Importing: $(basename "$image_tar")" | tee -a "$INSTALL_LOG"
-      if /usr/local/bin/k3s ctr images import "$image_tar" >> "$INSTALL_LOG" 2>&1; then
-        LOADED_COUNT=$((LOADED_COUNT + 1))
-      else
-        echo "  Warning: Failed to import $(basename "$image_tar")" | tee -a "$INSTALL_LOG"
-        FAILED_COUNT=$((FAILED_COUNT + 1))
-      fi
-    fi
-  done
-  echo "✓ Images imported: $LOADED_COUNT successful, $FAILED_COUNT failed" | tee -a "$INSTALL_LOG"
+# 步骤4: 加载镜像到k3s containerd
+echo "[4/10] 加载容器镜像到k3s..." | tee -a "$INSTALL_LOG"
+IMAGES_DIR=$(find "$SCRIPT_DIR" -type d -name "images" 2>/dev/null | head -1)
+
+if check_k3s_running 30 2; then
+  # 加载所有镜像
+  load_images_to_k3s "$IMAGES_DIR" "master"
   
-  # Verify loaded images
-  echo "Verifying loaded images..." | tee -a "$INSTALL_LOG"
-  /usr/local/bin/k3s ctr images ls -q | tee -a "$INSTALL_LOG"
+  # 预加载KubeEdge特定镜像
+  preload_kubeedge_images "$IMAGES_DIR"
 else
-  echo "Skipping image import (no images directory found)" | tee -a "$INSTALL_LOG"
+  echo "错误: K3s未运行，无法加载镜像" | tee -a "$INSTALL_LOG"
+  exit 1
 fi
 
-
-# Wait for API server
-echo "[4/7] Waiting for Kubernetes API..." | tee -a "$INSTALL_LOG"
+# 步骤5: 等待API服务器
+echo "[5/10] 等待Kubernetes API..." | tee -a "$INSTALL_LOG"
 for i in {1..30}; do
   if $KUBECTL cluster-info &> /dev/null; then
-    echo "✓ Kubernetes API is ready" | tee -a "$INSTALL_LOG"
+    echo "✓ Kubernetes API已就绪" | tee -a "$INSTALL_LOG"
     break
   fi
-  echo "Waiting... ($i/30)" | tee -a "$INSTALL_LOG"
+  echo "等待... ($i/30)" | tee -a "$INSTALL_LOG"
   sleep 2
 done
 
-
-# Create kubeedge namespace
-echo "[5/7] Creating KubeEdge namespace..." | tee -a "$INSTALL_LOG"
+# 步骤6: 创建kubeedge命名空间
+echo "[6/10] 创建KubeEdge命名空间..." | tee -a "$INSTALL_LOG"
 $KUBECTL create namespace kubeedge || true
-echo "✓ Namespace created" | tee -a "$INSTALL_LOG"
+echo "✓ 命名空间已创建" | tee -a "$INSTALL_LOG"
 
-# Install Istio CRDs (Required for EdgeMesh)
-echo "[5.5/7] Installing Istio CRDs (EdgeMesh dependency)..." | tee -a "$INSTALL_LOG"
+# 步骤7: 安装Istio CRDs
+echo "[7/10] 安装Istio CRDs (EdgeMesh依赖)..." | tee -a "$INSTALL_LOG"
 CRDS_DIR="$SCRIPT_DIR/crds/istio"
 if [ -d "$CRDS_DIR" ] && [ -n "$(ls -A "$CRDS_DIR" 2>/dev/null)" ]; then
   CRD_COUNT=0
   for crd_file in "$CRDS_DIR"/*.yaml; do
     if [ -f "$crd_file" ]; then
-      echo "  Installing $(basename "$crd_file")..." | tee -a "$INSTALL_LOG"
+      echo "  安装 $(basename "$crd_file")..." | tee -a "$INSTALL_LOG"
       if $KUBECTL apply -f "$crd_file" >> "$INSTALL_LOG" 2>&1; then
         CRD_COUNT=$((CRD_COUNT + 1))
       else
-        echo "  Warning: Failed to install $(basename "$crd_file")" | tee -a "$INSTALL_LOG"
+        echo "  警告: 安装失败 $(basename "$crd_file")" | tee -a "$INSTALL_LOG"
       fi
     fi
   done
   if [ $CRD_COUNT -gt 0 ]; then
-    echo "✓ Installed $CRD_COUNT Istio CRDs" | tee -a "$INSTALL_LOG"
+    echo "✓ 安装 $CRD_COUNT 个Istio CRDs" | tee -a "$INSTALL_LOG"
   else
-    echo "Warning: No Istio CRDs found in $CRDS_DIR" | tee -a "$INSTALL_LOG"
+    echo "警告: 在 $CRDS_DIR 中未找到Istio CRDs" | tee -a "$INSTALL_LOG"
   fi
 else
-  echo "Warning: Istio CRDs directory not found, EdgeMesh may not work properly" | tee -a "$INSTALL_LOG"
-  echo "  Expected location: $CRDS_DIR" | tee -a "$INSTALL_LOG"
+  echo "警告: 未找到Istio CRDs目录，EdgeMesh可能无法正常工作" | tee -a "$INSTALL_LOG"
+  echo "  期望位置: $CRDS_DIR" | tee -a "$INSTALL_LOG"
 fi
 
-# Pre-import KubeEdge images before keadm init
-echo "[5/7-b] Pre-importing KubeEdge component images..." | tee -a "$INSTALL_LOG"
-if [ -d "$IMAGES_DIR" ]; then
-  KUBEEDGE_IMAGE_COUNT=0
-  for image_tar in "$IMAGES_DIR"/docker.io-kubeedge-*.tar; do
-    if [ -f "$image_tar" ]; then
-      echo "  Pre-importing KubeEdge image: $(basename "$image_tar")" | tee -a "$INSTALL_LOG"
-      if /usr/local/bin/k3s ctr images import "$image_tar" >> "$INSTALL_LOG" 2>&1; then
-        KUBEEDGE_IMAGE_COUNT=$((KUBEEDGE_IMAGE_COUNT + 1))
-      else
-        echo "  Warning: Failed to import $(basename "$image_tar")" | tee -a "$INSTALL_LOG"
-      fi
-    fi
-  done
-  if [ $KUBEEDGE_IMAGE_COUNT -gt 0 ]; then
-    echo "✓ Pre-imported $KUBEEDGE_IMAGE_COUNT KubeEdge images" | tee -a "$INSTALL_LOG"
-    echo "Verifying KubeEdge images..." | tee -a "$INSTALL_LOG"
-    /usr/local/bin/k3s ctr images ls | grep kubeedge | tee -a "$INSTALL_LOG"
-  else
-    echo "Warning: No KubeEdge images found for pre-import" | tee -a "$INSTALL_LOG"
-  fi
-else
-  echo "Warning: Images directory not found, skipping KubeEdge image pre-import" | tee -a "$INSTALL_LOG"
-fi
-
-# Install KubeEdge CloudCore using keadm
-echo "[6/7] Installing KubeEdge CloudCore..." | tee -a "$INSTALL_LOG"
+# 步骤8: 安装KubeEdge CloudCore
+echo "[8/10] 安装KubeEdge CloudCore..." | tee -a "$INSTALL_LOG"
 cp "$KEADM_BIN" /usr/local/bin/keadm
 chmod +x /usr/local/bin/keadm
 
-# Initialize CloudCore
+# 初始化CloudCore
 mkdir -p /etc/kubeedge
 "$KEADM_BIN" init --advertise-address="$EXTERNAL_IP" --kubeedge-version=v"$KUBEEDGE_VERSION" --kube-config=/etc/rancher/k3s/k3s.yaml || true
 
-
-# Wait for CloudCore to be ready
-echo "Waiting for CloudCore to be ready..." | tee -a "$INSTALL_LOG"
+# 等待CloudCore就绪
+echo "等待CloudCore就绪..." | tee -a "$INSTALL_LOG"
 for i in {1..30}; do
   if $KUBECTL -n kubeedge get pod -l kubeedge=cloudcore 2>/dev/null | grep -q Running; then
-    echo "✓ CloudCore is ready" | tee -a "$INSTALL_LOG"
+    echo "✓ CloudCore已就绪" | tee -a "$INSTALL_LOG"
     break
   fi
-  echo "Waiting... ($i/30)" | tee -a "$INSTALL_LOG"
+  echo "等待... ($i/30)" | tee -a "$INSTALL_LOG"
   sleep 2
 done
 
-# Enable CloudCore dynamicController and cloudStream (Required for EdgeMesh and edge log/exec)
-echo "[6.5/7] Enabling CloudCore additional features..." | tee -a "$INSTALL_LOG"
-
-# Get current CloudCore configuration
+# 步骤9: 启用CloudCore附加功能
+echo "[9/10] 启用CloudCore附加功能..." | tee -a "$INSTALL_LOG"
 CLOUDCORE_CONFIG=$($KUBECTL -n kubeedge get cm cloudcore -o jsonpath='{.data.cloudcore\.yaml}' 2>/dev/null || echo "")
 
 if [ -z "$CLOUDCORE_CONFIG" ]; then
-  echo "  Warning: CloudCore ConfigMap not found, skipping customization" | tee -a "$INSTALL_LOG"
+  echo "  警告: 未找到CloudCore ConfigMap，跳过自定义配置" | tee -a "$INSTALL_LOG"
 else
-  echo "  Patching CloudCore ConfigMap to enable dynamicController and cloudStream..." | tee -a "$INSTALL_LOG"
+  echo "  修补CloudCore ConfigMap以启用dynamicController和cloudStream..." | tee -a "$INSTALL_LOG"
   
-  # Use yq-style patch or structured edit (since we don't have yq, use kubectl patch with strategic merge)
-  # Note: We only enable features, not changing certificate paths (keep keadm defaults)
-  
-  # Create a patch that enables dynamicController and cloudStream without touching cert paths
   cat > /tmp/cloudcore-patch.yaml << 'EOF_PATCH'
 data:
   cloudcore.yaml: |
@@ -413,155 +540,116 @@ data:
         enable: true
 EOF_PATCH
   
-  # Replace placeholder with actual IP
   sed -i "s/EXTERNAL_IP_PLACEHOLDER/$EXTERNAL_IP/g" /tmp/cloudcore-patch.yaml
   
-  # Apply the patch (strategic merge will preserve other fields including cert paths from keadm)
   if $KUBECTL -n kubeedge patch cm cloudcore --patch-file /tmp/cloudcore-patch.yaml >> "$INSTALL_LOG" 2>&1; then
-    echo "  ✓ CloudCore features enabled successfully" | tee -a "$INSTALL_LOG"
+    echo "  ✓ CloudCore功能已启用" | tee -a "$INSTALL_LOG"
     
-    # Restart CloudCore pod to apply changes
-    echo "  Restarting CloudCore pod to apply configuration..." | tee -a "$INSTALL_LOG"
+    echo "  重启CloudCore pod以应用配置..." | tee -a "$INSTALL_LOG"
     $KUBECTL -n kubeedge delete pod -l kubeedge=cloudcore >> "$INSTALL_LOG" 2>&1 || true
     
-    # Wait for CloudCore to be ready again
-    echo "  Waiting for CloudCore to restart..." | tee -a "$INSTALL_LOG"
+    echo "  等待CloudCore重启..." | tee -a "$INSTALL_LOG"
     sleep 5
     for i in {1..30}; do
       if $KUBECTL -n kubeedge get pod -l kubeedge=cloudcore 2>/dev/null | grep -q Running; then
-        echo "  ✓ CloudCore restarted successfully" | tee -a "$INSTALL_LOG"
+        echo "  ✓ CloudCore重启成功" | tee -a "$INSTALL_LOG"
         break
       fi
       if [ $i -eq 30 ]; then
-        echo "  Warning: CloudCore restart timeout" | tee -a "$INSTALL_LOG"
+        echo "  警告: CloudCore重启超时" | tee -a "$INSTALL_LOG"
       fi
       sleep 2
     done
   else
-    echo "  Warning: Failed to patch CloudCore ConfigMap" | tee -a "$INSTALL_LOG"
-    echo "  CloudCore will run with default configuration" | tee -a "$INSTALL_LOG"
+    echo "  警告: 修补CloudCore ConfigMap失败" | tee -a "$INSTALL_LOG"
+    echo "  CloudCore将以默认配置运行" | tee -a "$INSTALL_LOG"
   fi
   
   rm -f /tmp/cloudcore-patch.yaml
 fi
 
-# Generate edge token
-echo "[7/7] Generating edge token..." | tee -a "$INSTALL_LOG"
+# 步骤10: 生成edge token
+echo "[10/10] 生成edge token..." | tee -a "$INSTALL_LOG"
 TOKEN_DIR="/etc/kubeedge/tokens"
 mkdir -p "$TOKEN_DIR"
 
-# Get CloudCore service
 CLOUD_IP="$EXTERNAL_IP"
 CLOUD_PORT="10000"
 
-# Wait for tokensecret to be ready (with CloudCore running check)
-echo "  Waiting for KubeEdge token secret..." | tee -a "$INSTALL_LOG"
+# 等待tokensecret就绪
+echo "  等待KubeEdge token secret..." | tee -a "$INSTALL_LOG"
 MAX_WAIT=60
 for i in $(seq 1 $MAX_WAIT); do
-  # First ensure CloudCore is Running
   if ! $KUBECTL -n kubeedge get pod -l kubeedge=cloudcore 2>/dev/null | grep -q Running; then
     if [ $((i % 10)) -eq 0 ]; then
-      echo "  CloudCore not running yet, waiting... ($i/$MAX_WAIT)" | tee -a "$INSTALL_LOG"
+      echo "  CloudCore尚未运行，等待... ($i/$MAX_WAIT)" | tee -a "$INSTALL_LOG"
     fi
     sleep 2
     continue
   fi
   
-  # Then check for tokensecret
   if $KUBECTL get secret -n kubeedge tokensecret &>/dev/null; then
-    echo "  ✓ Token secret is ready" | tee -a "$INSTALL_LOG"
+    echo "  ✓ Token secret已就绪" | tee -a "$INSTALL_LOG"
     break
   fi
   
   if [ $i -eq $MAX_WAIT ]; then
-    echo "  Warning: Token secret not found after ${MAX_WAIT} attempts, will try keadm" | tee -a "$INSTALL_LOG"
+    echo "  警告: ${MAX_WAIT}次尝试后未找到token secret，将尝试keadm" | tee -a "$INSTALL_LOG"
   fi
   sleep 2
 done
 
-# Get token directly from K8s secret (正确的完整JWT格式)
+# 从K8s secret获取token
 EDGE_TOKEN=$($KUBECTL get secret -n kubeedge tokensecret -o jsonpath='{.data.tokendata}' 2>/dev/null | base64 -d)
 
-# Fallback: try keadm gettoken
+# 备用方案: 尝试keadm gettoken
 if [ -z "$EDGE_TOKEN" ]; then
-  echo "  Trying keadm gettoken..." | tee -a "$INSTALL_LOG"
+  echo "  尝试keadm gettoken..." | tee -a "$INSTALL_LOG"
   EDGE_TOKEN=$("$KEADM_BIN" gettoken --kubeedge-version=v"$KUBEEDGE_VERSION" --kube-config=/etc/rancher/k3s/k3s.yaml 2>/dev/null || echo "")
 fi
 
-# Last fallback: generate simple token (should not happen in normal case)
+# 最后备用方案: 生成简单token
 if [ -z "$EDGE_TOKEN" ]; then
-  echo "  Warning: Using fallback token generation" | tee -a "$INSTALL_LOG"
+  echo "  警告: 使用备用token生成" | tee -a "$INSTALL_LOG"
   EDGE_TOKEN=$(openssl rand -base64 32 | tr -d '\n' || echo "default-token-$(date +%s)")
 fi
 
-# Validate token format (should be JWT format with dots)
+# 验证token格式
 if [[ "$EDGE_TOKEN" == *"."* ]]; then
-  echo "  ✓ Token format validated (JWT)" | tee -a "$INSTALL_LOG"
+  echo "  ✓ Token格式已验证 (JWT)" | tee -a "$INSTALL_LOG"
 else
-  echo "  Warning: Token format may be incorrect (not JWT format)" | tee -a "$INSTALL_LOG"
+  echo "  警告: Token格式可能不正确 (非JWT格式)" | tee -a "$INSTALL_LOG"
 fi
 
-# Save token to file
+# 保存token到文件
 TOKEN_FILE="$TOKEN_DIR/edge-token.txt"
 cat > "$TOKEN_FILE" << EOF
 {
   "cloudIP": "$CLOUD_IP",
   "cloudPort": $CLOUD_PORT,
   "token": "$EDGE_TOKEN",
-  "generatedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "generatedAt": "$(date -u +%Y-%m%dT%H:%M:%SZ)",
   "edgeConnectCommand": "sudo ./install.sh $CLOUD_IP:$CLOUD_PORT $EDGE_TOKEN"
 }
 EOF
 
 chmod 600 "$TOKEN_FILE"
-echo "✓ Edge token generated" | tee -a "$INSTALL_LOG"
+echo "✓ Edge token已生成" | tee -a "$INSTALL_LOG"
 
-echo "" | tee -a "$INSTALL_LOG"
-
-echo "=== Installation completed successfully ===" | tee -a "$INSTALL_LOG"
-echo "" | tee -a "$INSTALL_LOG"
-echo "=== CloudCore Information ===" | tee -a "$INSTALL_LOG"
-echo "Cloud IP: $CLOUD_IP" | tee -a "$INSTALL_LOG"
-echo "Cloud Port: $CLOUD_PORT" | tee -a "$INSTALL_LOG"
-echo "" | tee -a "$INSTALL_LOG"
-echo "=== Edge Connection Token ===" | tee -a "$INSTALL_LOG"
-echo "Token: $EDGE_TOKEN" | tee -a "$INSTALL_LOG"
-echo "Save this token for edge node installation" | tee -a "$INSTALL_LOG"
-echo "" | tee -a "$INSTALL_LOG"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a "$INSTALL_LOG"
-echo "【K3s worker 节点加入命令】" | tee -a "$INSTALL_LOG"
-K3S_TOKEN_VALUE=""
-if [ -f /var/lib/rancher/k3s/server/node-token ]; then
-  K3S_TOKEN_VALUE=$(cat /var/lib/rancher/k3s/server/node-token)
-  echo "K3S_TOKEN: $K3S_TOKEN_VALUE" | tee -a "$INSTALL_LOG"
-else
-  echo "K3S_TOKEN: <未找到 /var/lib/rancher/k3s/server/node-token 文件>" | tee -a "$INSTALL_LOG"
-fi
-echo "sudo ./install.sh --worker $EXTERNAL_IP:6443:$K3S_TOKEN_VALUE <worker节点名称>" | tee -a "$INSTALL_LOG"
-echo "" | tee -a "$INSTALL_LOG"
-echo "【KubeEdge edge 节点加入命令】" | tee -a "$INSTALL_LOG"
-echo "sudo ./install.sh $CLOUD_IP:$CLOUD_PORT '$EDGE_TOKEN' <edge节点名称>" | tee -a "$INSTALL_LOG"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 
 # =====================================
-# 6.8. Patch K3s Built-in Metrics Server for KubeEdge
+# 附加配置
 # =====================================
-echo "" | tee -a "$INSTALL_LOG"
-echo "[6.8/7] Patching K3s built-in Metrics Server for KubeEdge..." | tee -a "$INSTALL_LOG"
 
-# 检查 metrics-server 是否存在
+# 修补K3s内置Metrics Server
+echo "" | tee -a "$INSTALL_LOG"
+echo "=== 配置 Metrics Server 以支持 KubeEdge ===" | tee -a "$INSTALL_LOG"
+
 if $KUBECTL get deployment metrics-server -n kube-system &>/dev/null; then
-  echo "  Found built-in metrics-server, applying KubeEdge compatibility patch..." | tee -a "$INSTALL_LOG"
+  echo "找到内置metrics-server，应用KubeEdge兼容性补丁..." | tee -a "$INSTALL_LOG"
   
-  # 为 KubeEdge 修改 metrics-server 部署（参考 KubeEdge 官方文档）
-  # 1. 启用 hostNetwork 以访问 CloudStream 隧道端口映射
-  # 2. 修改监听端口为 4443 避免与 kubelet 的 10250 冲突
-  # 3. 添加 nodeAffinity 确保只在 master 节点运行
-  # 4. 添加 tolerations 容忍 master 节点污点  
-  # 5. 添加 --kubelet-insecure-tls 跳过 TLS 验证
-  
-  # Step 1: 设置 hostNetwork, affinity 和 tolerations (不包含 containers，避免冲突)
+  # 设置hostNetwork, affinity和tolerations
   PATCH_DATA=$(cat <<'EOF'
 {
   "spec": {
@@ -612,198 +700,104 @@ EOF
 )
   
   if echo "$PATCH_DATA" | $KUBECTL patch deployment metrics-server -n kube-system --type=strategic --patch-file /dev/stdin >> "$INSTALL_LOG" 2>&1; then
-    echo "  ✓ Applied hostNetwork, affinity and tolerations." | tee -a "$INSTALL_LOG"
-  else
-    echo "  ⚠ Failed to apply base configuration." | tee -a "$INSTALL_LOG"
+    echo "✓ 已应用hostNetwork, affinity和tolerations" | tee -a "$INSTALL_LOG"
   fi
   
-  # Step 2: 使用 JSON patch 修改容器端口
-  if $KUBECTL patch deployment metrics-server -n kube-system --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/ports/0/containerPort","value":4443}]' >> "$INSTALL_LOG" 2>&1; then
-    echo "  ✓ Updated containerPort to 4443." | tee -a "$INSTALL_LOG"
-  else
-    echo "  ⚠ Failed to update containerPort." | tee -a "$INSTALL_LOG"
-  fi
+  # 修改容器配置
+  $KUBECTL patch deployment metrics-server -n kube-system --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/ports/0/containerPort","value":4443}]' >> "$INSTALL_LOG" 2>&1 || true
+  $KUBECTL patch deployment metrics-server -n kube-system --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/args/1","value":"--secure-port=4443"}]' >> "$INSTALL_LOG" 2>&1 || true
+  $KUBECTL patch deployment metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' >> "$INSTALL_LOG" 2>&1 || true
+  $KUBECTL patch deployment metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-use-node-status-port"}]' >> "$INSTALL_LOG" 2>&1 || true
+  $KUBECTL patch deployment metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-preferred-address-types=InternalIP,Hostname,InternalDNS,ExternalDNS,ExternalIP"}]' >> "$INSTALL_LOG" 2>&1 || true
   
-  # Step 3: 修改 --secure-port 参数
-  if $KUBECTL patch deployment metrics-server -n kube-system --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/args/1","value":"--secure-port=4443"}]' >> "$INSTALL_LOG" 2>&1; then
-    echo "  ✓ Updated --secure-port=4443." | tee -a "$INSTALL_LOG"
-  else
-    echo "  ⚠ Failed to update --secure-port." | tee -a "$INSTALL_LOG"
-  fi
-  
-  # Step 4: 添加 --kubelet-insecure-tls 参数
-  if $KUBECTL patch deployment metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' >> "$INSTALL_LOG" 2>&1; then
-    echo "  ✓ Added --kubelet-insecure-tls." | tee -a "$INSTALL_LOG"
-  else
-    echo "  ⚠ Failed to add --kubelet-insecure-tls (may already exist)." | tee -a "$INSTALL_LOG"
-  fi
-
-  # Step 5: 添加 --kubelet-use-node-status-port 参数（确保使用 NodeStatus 上的 kubelet 端口 1035x）
-  if $KUBECTL patch deployment metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-use-node-status-port"}]' >> "$INSTALL_LOG" 2>&1; then
-    echo "  ✓ Added --kubelet-use-node-status-port." | tee -a "$INSTALL_LOG"
-  else
-    echo "  ⚠ Failed to add --kubelet-use-node-status-port (may already exist)." | tee -a "$INSTALL_LOG"
-  fi
-
-  # Step 6: 添加 --kubelet-preferred-address-types，优先使用 InternalIP
-  if $KUBECTL patch deployment metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-preferred-address-types=InternalIP,Hostname,InternalDNS,ExternalDNS,ExternalIP"}]' >> "$INSTALL_LOG" 2>&1; then
-    echo "  ✓ Added --kubelet-preferred-address-types." | tee -a "$INSTALL_LOG"
-  else
-    echo "  ⚠ Failed to add --kubelet-preferred-address-types (may already exist)." | tee -a "$INSTALL_LOG"
-  fi
-  
-  echo "  ✓ Metrics-server patch completed. It will restart automatically." | tee -a "$INSTALL_LOG"
-  echo "  提示: metrics-server 已配置为:" | tee -a "$INSTALL_LOG"
-  echo "    - 使用 hostNetwork 访问 CloudStream 隧道" | tee -a "$INSTALL_LOG"
-  echo "    - 监听端口 4443 (避免与 kubelet:10250 冲突)" | tee -a "$INSTALL_LOG"
-  echo "    - 跳过 TLS 验证以支持边缘节点" | tee -a "$INSTALL_LOG"
-  echo "    - 验证命令: kubectl top nodes (边缘节点加入后生效)" | tee -a "$INSTALL_LOG"
+  echo "✓ Metrics-server补丁完成，将自动重启" | tee -a "$INSTALL_LOG"
 else
-  echo "  ⚠ metrics-server not found, skipping patch." | tee -a "$INSTALL_LOG"
+  echo "未找到metrics-server，跳过补丁" | tee -a "$INSTALL_LOG"
 fi
 
+# 配置svclb避免边缘节点
 echo "" | tee -a "$INSTALL_LOG"
-echo "=== Configuring svclb to avoid edge nodes ===" | tee -a "$INSTALL_LOG"
+echo "=== 配置 svclb 避免调度到边缘节点 ===" | tee -a "$INSTALL_LOG"
 
-# 配置所有 svclb DaemonSet，防止调度到边缘节点
-# K3s 的 Service Load Balancer (svclb) 不应该在边缘节点运行
-# 使用 nodeAffinity 而不是 nodeSelector，因为 nodeSelector 只能匹配标签存在且值相等的情况
-
-# 等待 svclb DaemonSet 创建（K3s 会为 LoadBalancer 类型的 Service 自动创建，如 Traefik）
-echo "  Waiting for svclb DaemonSets to be created..." | tee -a "$INSTALL_LOG"
+echo "等待svclb DaemonSets创建..." | tee -a "$INSTALL_LOG"
 SVCLB_COUNT=0
 for i in {1..30}; do
   SVCLB_COUNT=$($KUBECTL get daemonset -n kube-system -l svccontroller.k3s.cattle.io/svcname --no-headers 2>/dev/null | wc -l)
   if [ "$SVCLB_COUNT" -gt 0 ]; then
-    echo "  ✓ Found $SVCLB_COUNT svclb DaemonSet(s)" | tee -a "$INSTALL_LOG"
+    echo "✓ 找到 $SVCLB_COUNT 个svclb DaemonSet" | tee -a "$INSTALL_LOG"
     break
   fi
   if [ $i -eq 30 ]; then
-    echo "  ⚠ No svclb DaemonSet found after waiting" | tee -a "$INSTALL_LOG"
+    echo "等待后未找到svclb DaemonSet" | tee -a "$INSTALL_LOG"
   fi
   sleep 1
 done
 
 if [ "$SVCLB_COUNT" -gt 0 ]; then
-  echo "  Adding nodeAffinity to exclude edge nodes..." | tee -a "$INSTALL_LOG"
+  echo "添加nodeAffinity以排除边缘节点..." | tee -a "$INSTALL_LOG"
   
-  # 为所有 svclb DaemonSet 添加 nodeAffinity (排除带有 node-role.kubernetes.io/edge 标签的节点)
   PATCHED_COUNT=0
   $KUBECTL get daemonset -n kube-system -l svccontroller.k3s.cattle.io/svcname -o name | while read -r ds; do
     DS_NAME=$(echo "$ds" | cut -d'/' -f2)
     
-    # 使用 nodeAffinity 的 DoesNotExist 操作符排除边缘节点
     AFFINITY_PATCH='{"spec":{"template":{"spec":{"affinity":{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"node-role.kubernetes.io/edge","operator":"DoesNotExist"}]}]}}}}}}}'
     
     if $KUBECTL patch "$ds" -n kube-system --type=strategic -p="$AFFINITY_PATCH" >> "$INSTALL_LOG" 2>&1; then
-      echo "  ✓ Patched $DS_NAME with nodeAffinity (DoesNotExist edge label)." | tee -a "$INSTALL_LOG"
+      echo "✓ 已修补 $DS_NAME 的nodeAffinity" | tee -a "$INSTALL_LOG"
       PATCHED_COUNT=$((PATCHED_COUNT + 1))
     else
-      echo "  ⚠ Failed to patch $DS_NAME." | tee -a "$INSTALL_LOG"
+      echo "修补 $DS_NAME 失败" | tee -a "$INSTALL_LOG"
     fi
   done
   
-  echo "  ✓ svclb DaemonSets configured ($PATCHED_COUNT patched)." | tee -a "$INSTALL_LOG"
-  echo "  提示: svclb 已配置 nodeAffinity (排除 node-role.kubernetes.io/edge 标签的节点)" | tee -a "$INSTALL_LOG"
+  echo "✓ svclb DaemonSets已配置 ($PATCHED_COUNT 个已修补)" | tee -a "$INSTALL_LOG"
 else
-  echo "  ⚠ No svclb DaemonSet found. This is normal if no LoadBalancer Service exists yet." | tee -a "$INSTALL_LOG"
-  echo "  提示: 如果后续创建 LoadBalancer Service，请手动执行以下命令排除边缘节点:" | tee -a "$INSTALL_LOG"
-  echo "    kubectl get ds -n kube-system -l svccontroller.k3s.cattle.io/svcname -o name | \\" | tee -a "$INSTALL_LOG"
-  echo "      xargs -I{} kubectl patch {} -n kube-system --type=strategic \\" | tee -a "$INSTALL_LOG"
-  echo "      -p '{\"spec\":{\"template\":{\"spec\":{\"affinity\":{\"nodeAffinity\":{\"requiredDuringSchedulingIgnoredDuringExecution\":{\"nodeSelectorTerms\":[{\"matchExpressions\":[{\"key\":\"node-role.kubernetes.io/edge\",\"operator\":\"DoesNotExist\"}]}]}}}}}}}'" | tee -a "$INSTALL_LOG"
+  echo "未找到svclb DaemonSet。如果没有LoadBalancer Service，这是正常的" | tee -a "$INSTALL_LOG"
 fi
 
-# 额外建议：避免 kube-proxy 调度到边缘节点（官方建议）
+# 配置kube-proxy避免边缘节点
 echo "" | tee -a "$INSTALL_LOG"
-echo "=== Configuring kube-proxy to avoid edge nodes (optional) ===" | tee -a "$INSTALL_LOG"
+echo "=== 配置 kube-proxy 避免边缘节点 (可选) ===" | tee -a "$INSTALL_LOG"
 if $KUBECTL -n kube-system get daemonset kube-proxy &>/dev/null; then
   if $KUBECTL -n kube-system patch daemonset kube-proxy --type=strategic -p '{"spec":{"template":{"spec":{"affinity":{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"node-role.kubernetes.io/edge","operator":"DoesNotExist"}]}]}}}}}}}' >> "$INSTALL_LOG" 2>&1; then
-    echo "  ✓ Patched kube-proxy to exclude edge nodes." | tee -a "$INSTALL_LOG"
+    echo "✓ 已修补kube-proxy以排除边缘节点" | tee -a "$INSTALL_LOG"
   else
-    echo "  ⚠ Failed to patch kube-proxy (may already be configured)." | tee -a "$INSTALL_LOG"
+    echo "修补kube-proxy失败 (可能已配置)" | tee -a "$INSTALL_LOG"
   fi
 else
-  echo "  ℹ kube-proxy DaemonSet not found (k3s may not deploy it); skipping." | tee -a "$INSTALL_LOG"
+  echo "未找到kube-proxy DaemonSet (k3s可能未部署); 跳过" | tee -a "$INSTALL_LOG"
 fi
 
+# 安装EdgeMesh (可选)
 echo "" | tee -a "$INSTALL_LOG"
-echo "=== Next Steps ===" | tee -a "$INSTALL_LOG"
-echo "1. Verify k3s cluster:" | tee -a "$INSTALL_LOG"
-echo "   kubectl get nodes" | tee -a "$INSTALL_LOG"
-echo "" | tee -a "$INSTALL_LOG"
-echo "2. Verify CloudCore:" | tee -a "$INSTALL_LOG"
-echo "   kubectl -n kubeedge get pod" | tee -a "$INSTALL_LOG"
-echo "" | tee -a "$INSTALL_LOG"
-echo "3. Verify Metrics Server (K3s built-in, patched):" | tee -a "$INSTALL_LOG"
-echo "   kubectl get deployment -n kube-system metrics-server -o yaml" | tee -a "$INSTALL_LOG"
-echo "   kubectl top node  # 在边缘节点加入后可用" | tee -a "$INSTALL_LOG"
-echo "" | tee -a "$INSTALL_LOG"
-echo "4. 验证日志与监控功能:" | tee -a "$INSTALL_LOG"
-if [ -f "$SCRIPT_DIR/manifests/verify-logs-metrics.sh" ]; then
-  echo "   sudo bash manifests/verify-logs-metrics.sh  # 自动检查所有功能" | tee -a "$INSTALL_LOG"
-else
-  echo "   提示: 未检测到 manifests/verify-logs-metrics.sh，可手动验证:" | tee -a "$INSTALL_LOG"
-  echo "     kubectl -n kubeedge get pod -l kubeedge=cloudcore" | tee -a "$INSTALL_LOG"
-  echo "     kubectl top node   # 边缘节点接入后" | tee -a "$INSTALL_LOG"
-  echo "     选一个边缘 Pod: kubectl logs -n <ns> <pod> --tail=10" | tee -a "$INSTALL_LOG"
-  echo "     kubectl exec -n <ns> <pod> -- echo ok" | tee -a "$INSTALL_LOG"
-fi
-echo "" | tee -a "$INSTALL_LOG"
-echo "5. To connect an edge node:" | tee -a "$INSTALL_LOG"
-echo "   - Use cloud IP: $CLOUD_IP" | tee -a "$INSTALL_LOG"
-echo "   - Use token: $EDGE_TOKEN" | tee -a "$INSTALL_LOG"
-echo "" | tee -a "$INSTALL_LOG"
-echo "Installation log: $INSTALL_LOG" | tee -a "$INSTALL_LOG"
+echo "=== 安装 EdgeMesh (可选) ===" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 
-# Print token to stdout for easy copy
-echo ""
-# =====================================
-# 7. Install EdgeMesh (Automatic)
-# =====================================
-echo "" | tee -a "$INSTALL_LOG"
-echo "=== 7. 安装 EdgeMesh ===" | tee -a "$INSTALL_LOG"
-echo "" | tee -a "$INSTALL_LOG"
-
-# Check if helm-charts directory exists
 HELM_CHART_DIR="$SCRIPT_DIR/helm-charts"
 if [ -d "$HELM_CHART_DIR" ] && [ -f "$HELM_CHART_DIR/edgemesh.tgz" ]; then
   echo "检测到 EdgeMesh Helm Chart，开始自动安装..." | tee -a "$INSTALL_LOG"
-  echo "[7/7] 安装 EdgeMesh..." | tee -a "$INSTALL_LOG"
   
-  # Generate PSK for EdgeMesh
+  # 生成EdgeMesh PSK
   EDGEMESH_PSK=$(openssl rand -base64 32)
   echo "生成 EdgeMesh PSK: $EDGEMESH_PSK" | tee -a "$INSTALL_LOG"
   
-  # Get master node name for relay
+  # 获取master节点名称
   MASTER_NODE=$($KUBECTL get nodes -o jsonpath='{.items[0].metadata.name}')
   echo "使用 Relay Node: $MASTER_NODE" | tee -a "$INSTALL_LOG"
   
-  # Check if helm is available
+  # 检查helm是否可用
   HELM_CMD=""
   if command -v helm &> /dev/null; then
     HELM_CMD="helm"
   elif [ -f "$SCRIPT_DIR/helm" ]; then
     HELM_CMD="$SCRIPT_DIR/helm"
   else
-    echo "警告: 未找到 helm 命令，尝试使用 kubectl 手动部署 EdgeMesh" | tee -a "$INSTALL_LOG"
-    echo "EdgeMesh 需要 helm 进行部署，请手动安装:" | tee -a "$INSTALL_LOG"
-    echo "  1. 下载 helm: wget https://get.helm.sh/helm-v3.13.0-linux-$ARCH.tar.gz" | tee -a "$INSTALL_LOG"
-    echo "  2. 解压并安装: tar -xzf helm-v3.13.0-linux-$ARCH.tar.gz && sudo mv linux-$ARCH/helm /usr/local/bin/" | tee -a "$INSTALL_LOG"
-    echo "  3. 安装 EdgeMesh: helm install edgemesh $HELM_CHART_DIR/edgemesh.tgz --namespace kubeedge \\" | tee -a "$INSTALL_LOG"
-    echo "       --set agent.image=kubeedge/edgemesh-agent:v1.17.0 \\" | tee -a "$INSTALL_LOG"
-    echo "       --set agent.psk=\"$EDGEMESH_PSK\" \\" | tee -a "$INSTALL_LOG"
-    echo "       --set agent.relayNodes[0].nodeName=\"$MASTER_NODE\" \\" | tee -a "$INSTALL_LOG"
-    echo "       --set agent.relayNodes[0].advertiseAddress=\"{$CLOUD_IP}\"" | tee -a "$INSTALL_LOG"
-    
-    # Save PSK to file for edge nodes
+    echo "警告: 未找到 helm 命令，跳过EdgeMesh自动安装" | tee -a "$INSTALL_LOG"
     echo "$EDGEMESH_PSK" > "$SCRIPT_DIR/edgemesh-psk.txt"
     echo "EdgeMesh PSK 已保存到: $SCRIPT_DIR/edgemesh-psk.txt" | tee -a "$INSTALL_LOG"
-    HELM_CMD=""
   fi
   
   if [ -n "$HELM_CMD" ]; then
-    # Install EdgeMesh using helm
     $HELM_CMD install edgemesh "$HELM_CHART_DIR/edgemesh.tgz" \
       --namespace kubeedge \
       --set agent.image=kubeedge/edgemesh-agent:v1.17.0 \
@@ -813,22 +807,64 @@ if [ -d "$HELM_CHART_DIR" ] && [ -f "$HELM_CHART_DIR/edgemesh.tgz" ]; then
     
     if [ $? -eq 0 ]; then
       echo "✓ EdgeMesh 安装成功" | tee -a "$INSTALL_LOG"
-      
-      # Save PSK to file for edge nodes
       echo "$EDGEMESH_PSK" > "$SCRIPT_DIR/edgemesh-psk.txt"
       echo "EdgeMesh PSK 已保存到: $SCRIPT_DIR/edgemesh-psk.txt" | tee -a "$INSTALL_LOG"
-      echo "  提示: EdgeMesh Agent 将在边缘节点加入后自动部署到各边缘节点" | tee -a "$INSTALL_LOG"
     else
       echo "✗ EdgeMesh 安装失败，请检查日志" | tee -a "$INSTALL_LOG"
     fi
   fi
 else
   echo "未检测到 EdgeMesh Helm Chart，跳过安装" | tee -a "$INSTALL_LOG"
-  echo "EdgeMesh 需要从 cloud 离线包中获取" | tee -a "$INSTALL_LOG"
 fi
 
+# =====================================
+# 安装完成
+# =====================================
+echo "" | tee -a "$INSTALL_LOG"
+echo "=== 安装完成 ===" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "=== CloudCore 信息 ===" | tee -a "$INSTALL_LOG"
+echo "Cloud IP: $CLOUD_IP" | tee -a "$INSTALL_LOG"
+echo "Cloud Port: $CLOUD_PORT" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "=== Edge 连接 Token ===" | tee -a "$INSTALL_LOG"
+echo "Token: $EDGE_TOKEN" | tee -a "$INSTALL_LOG"
+echo "保存此token用于边缘节点安装" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a "$INSTALL_LOG"
+echo "【K3s worker 节点加入命令】" | tee -a "$INSTALL_LOG"
+K3S_TOKEN_VALUE=""
+if [ -f /var/lib/rancher/k3s/server/node-token ]; then
+  K3S_TOKEN_VALUE=$(cat /var/lib/rancher/k3s/server/node-token)
+  echo "K3S_TOKEN: $K3S_TOKEN_VALUE" | tee -a "$INSTALL_LOG"
+else
+  echo "K3S_TOKEN: <未找到 /var/lib/rancher/k3s/server/node-token 文件>" | tee -a "$INSTALL_LOG"
+fi
+echo "sudo ./install.sh --worker $EXTERNAL_IP:6443 $K3S_TOKEN_VALUE <worker节点名称>" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "【KubeEdge edge 节点加入命令】" | tee -a "$INSTALL_LOG"
+echo "sudo ./install.sh $CLOUD_IP:$CLOUD_PORT '$EDGE_TOKEN' <edge节点名称>" | tee -a "$INSTALL_LOG"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "=== 后续步骤 ===" | tee -a "$INSTALL_LOG"
+echo "1. 验证k3s集群:" | tee -a "$INSTALL_LOG"
+echo "   kubectl get nodes" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "2. 验证CloudCore:" | tee -a "$INSTALL_LOG"
+echo "   kubectl -n kubeedge get pod" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "3. 验证镜像加载:" | tee -a "$INSTALL_LOG"
+echo "   k3s ctr images ls" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "4. 连接边缘节点:" | tee -a "$INSTALL_LOG"
+echo "   - 使用 cloud IP: $CLOUD_IP" | tee -a "$INSTALL_LOG"
+echo "   - 使用 token: $EDGE_TOKEN" | tee -a "$INSTALL_LOG"
+echo "" | tee -a "$INSTALL_LOG"
+echo "安装日志: $INSTALL_LOG" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 
+# 打印token到stdout便于复制
+echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "边缘节点接入Token (请保存用于edge节点安装):"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
