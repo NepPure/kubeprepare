@@ -268,34 +268,32 @@ EOF
   systemctl daemon-reload
   systemctl enable k3s-agent
   systemctl restart k3s-agent
-  
-  # 等待k3s-agent启动
+
+  # 等待k3s-agent启动，输出详细状态
   echo "等待K3s worker节点启动..." | tee -a "$INSTALL_LOG"
-  for i in {1..30}; do
-    if systemctl is-active --quiet k3s-agent; then
+  for i in $(seq 1 30); do
+    status=$(systemctl is-active k3s-agent)
+    echo "k3s-agent 当前状态: $status" | tee -a "$INSTALL_LOG"
+    if [ "$status" = "active" ]; then
       echo "✓ K3s worker节点已启动" | tee -a "$INSTALL_LOG"
       break
     fi
     echo "等待... ($i/30)" | tee -a "$INSTALL_LOG"
     sleep 2
   done
-  
+
   # 检查k3s-agent状态
   if ! systemctl is-active --quiet k3s-agent; then
     echo "错误: K3s worker节点启动失败" | tee -a "$INSTALL_LOG"
     systemctl status k3s-agent >> "$INSTALL_LOG" 2>&1 || true
     return 1
   fi
-  
-  # 加载镜像
+
+  # 加载镜像（worker节点不再check_k3s_running，直接加载）
   local images_dir=$(find "$script_dir" -type d -name "images" 2>/dev/null | head -1)
-  if check_k3s_running 30 2; then
-    load_images_to_k3s "$images_dir" "worker"
-    preload_kubeedge_images "$images_dir"
-  else
-    echo "警告: K3s服务未运行，无法加载镜像" | tee -a "$INSTALL_LOG"
-  fi
-  
+  load_images_to_k3s "$images_dir" "worker"
+  preload_kubeedge_images "$images_dir"
+
   return 0
 }
 
