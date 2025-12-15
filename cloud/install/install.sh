@@ -120,6 +120,55 @@ check_k3s_running() {
   return 1
 }
 
+# 函数: 检查网络连通性
+check_network_connectivity() {
+  local target_host="$1"
+  local target_port="$2"
+  local timeout="${3:-5}"
+  
+  echo "检查网络连通性到 $target_host:$target_port..." | tee -a "$INSTALL_LOG"
+  
+  # 检查DNS解析
+  if ! nslookup "$target_host" >/dev/null 2>&1; then
+    # 如果DNS解析失败，尝试直接使用IP
+    if [[ ! "$target_host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "警告: 无法解析主机名: $target_host" | tee -a "$INSTALL_LOG"
+      return 1
+    fi
+  fi
+  
+  # 使用nc检查端口
+  if command -v nc &>/dev/null; then
+    if nc -z -w "$timeout" "$target_host" "$target_port" 2>/dev/null; then
+      echo "✓ 网络连通性检查通过: $target_host:$target_port 可达" | tee -a "$INSTALL_LOG"
+      return 0
+    else
+      echo "✗ 网络连通性检查失败: $target_host:$target_port 不可达" | tee -a "$INSTALL_LOG"
+      return 1
+    fi
+  fi
+  
+  # 使用telnet检查端口
+  if command -v telnet &>/dev/null; then
+    if timeout "$timeout" telnet "$target_host" "$target_port" </dev/null 2>&1 | grep -q "Connected"; then
+      echo "✓ 网络连通性检查通过: $target_host:$target_port 可达" | tee -a "$INSTALL_LOG"
+      return 0
+    else
+      echo "✗ 网络连通性检查失败: $target_host:$target_port 不可达" | tee -a "$INSTALL_LOG"
+      return 1
+    fi
+  fi
+  
+  # 使用bash内置TCP检查
+  if timeout "$timeout" bash -c "exec 3<>/dev/tcp/$target_host/$target_port" 2>/dev/null; then
+    echo "✓ 网络连通性检查通过: $target_host:$target_port 可达" | tee -a "$INSTALL_LOG"
+    return 0
+  else
+    echo "✗ 网络连通性检查失败: $target_host:$target_port 不可达" | tee -a "$INSTALL_LOG"
+    return 1
+  fi
+}
+
 # 函数: 加载镜像到K3s containerd
 load_images_to_k3s() {
   local images_dir="$1"
@@ -226,6 +275,61 @@ preload_kubeedge_images() {
   fi
 }
 
+# 函数: 检查并等待k3s-agent服务完全启动
+# 函数: 检查并等待k3s-agent服务完全启动（简化版）
+wait_for_k3s_agent() {
+  local max_attempts=30  # 减少等待时间
+  local attempt=1
+  
+  echo "等待k3s-agent服务启动..." | tee -a "$INSTALL_LOG"
+  
+  # 先立即检查一次
+  local status=$(systemctl is-active k3s-agent 2>/dev/null || echo "unknown")
+  if [ "$status" = "active" ]; then
+    echo "✓ k3s-agent服务已启动" | tee -a "$INSTALL_LOG"
+    return 0
+  fi
+  
+  while [ $attempt -le $max_attempts ]; do
+    status=$(systemctl is-active k3s-agent 2>/dev/null || echo "unknown")
+    
+    if [ "$status" = "active" ]; then
+      echo "✓ k3s-agent服务已启动 (等待${attempt}秒)" | tee -a "$INSTALL_LOG"
+      
+      # 验证进程存在
+      if ps aux | grep -v grep | grep -q "k3s agent"; then
+        echo "✓ k3s agent进程确认存在" | tee -a "$INSTALL_LOG"
+      else
+        echo "⚠ k3s agent进程未找到，但服务状态为active" | tee -a "$INSTALL_LOG"
+      fi
+      
+      return 0
+    elif [ "$status" = "failed" ]; then
+      echo "✗ k3s-agent服务启动失败" | tee -a "$INSTALL_LOG"
+      systemctl status k3s-agent --no-pager | tee -a "$INSTALL_LOG"
+      return 1
+    fi
+    
+    if [ $((attempt % 5)) -eq 0 ]; then
+      echo "  等待中... (${attempt}/${max_attempts}) - 当前状态: $status" | tee -a "$INSTALL_LOG"
+    fi
+    
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+  
+  # 检查最终状态
+  status=$(systemctl is-active k3s-agent 2>/dev/null || echo "unknown")
+  if [ "$status" = "active" ]; then
+    echo "✓ k3s-agent服务最终启动成功" | tee -a "$INSTALL_LOG"
+    return 0
+  else
+    echo "✗ k3s-agent服务启动超时，最终状态: $status" | tee -a "$INSTALL_LOG"
+    systemctl status k3s-agent --no-pager | tee -a "$INSTALL_LOG"
+    return 1
+  fi
+}
+
 # 函数: 安装K3s worker节点
 install_k3s_worker() {
   local k3s_bin="$1"
@@ -235,65 +339,135 @@ install_k3s_worker() {
   local node_name="$5"
   local script_dir="$6"
   
-  echo "离线安装K3s worker节点..." | tee -a "$INSTALL_LOG"
+  echo "=== 开始安装K3s worker节点 ===" | tee -a "$INSTALL_LOG"
   
-  # 安装k3s二进制文件
-  cp "$k3s_bin" /usr/local/bin/k3s
-  chmod +x /usr/local/bin/k3s
+  # 步骤1: 检查网络连通性
+  echo "[1/5] 检查到master节点的网络连通性..." | tee -a "$INSTALL_LOG"
+  if ! check_network_connectivity "$k3s_master_addr" "$k3s_master_port"; then
+    echo "警告: 网络连通性检查失败，但继续安装..." | tee -a "$INSTALL_LOG"
+    echo "  请确保以下条件:" | tee -a "$INSTALL_LOG"
+    echo "  1. master节点($k3s_master_addr)正在运行" | tee -a "$INSTALL_LOG"
+    echo "  2. 防火墙已放行端口 $k3s_master_port" | tee -a "$INSTALL_LOG"
+    echo "  3. 网络路由正确配置" | tee -a "$INSTALL_LOG"
+  else
+    echo "✓ 网络连通性检查通过" | tee -a "$INSTALL_LOG"
+  fi
   
-  # 创建k3s-agent服务
+  # 步骤2: 安装k3s二进制文件
+  echo "[2/5] 安装k3s二进制文件..." | tee -a "$INSTALL_LOG"
+  if [ -f "$k3s_bin" ]; then
+    cp "$k3s_bin" /usr/local/bin/k3s
+    chmod +x /usr/local/bin/k3s
+    echo "✓ k3s二进制文件已安装" | tee -a "$INSTALL_LOG"
+  else
+    echo "✗ 找不到k3s二进制文件: $k3s_bin" | tee -a "$INSTALL_LOG"
+    return 1
+  fi
+  
+  # 步骤3: 创建k3s-agent服务
+  echo "[3/5] 配置k3s-agent服务..." | tee -a "$INSTALL_LOG"
+  
+  # 清理可能存在的旧配置
+  systemctl stop k3s-agent 2>/dev/null || true
+  systemctl disable k3s-agent 2>/dev/null || true
+  rm -f /etc/systemd/system/k3s-agent.service
+  
+  # 创建新的服务文件
   cat > /etc/systemd/system/k3s-agent.service << EOF
 [Unit]
 Description=Lightweight Kubernetes Agent
+Documentation=https://k3s.io
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=notify
 ExecStart=/usr/local/bin/k3s agent \\
-  --server https://$k3s_master_addr:$k3s_master_port \\
-  --token $k3s_token \\
-  --node-name=$node_name
+  --server=https://${k3s_master_addr}:${k3s_master_port} \\
+  --token=${k3s_token} \\
+  --node-name=${node_name} \\
+  --data-dir=/var/lib/rancher/k3s/agent \\
+  --kubelet-arg=cloud-provider=external \\
+  --kubelet-arg=provider-id=k3s://${node_name}
 KillMode=process
+Delegate=yes
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+TimeoutStartSec=0
 Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=k3s-agent
+RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
 EOF
-
+  
+  # 设置权限
+  chmod 644 /etc/systemd/system/k3s-agent.service
+  
+  # 重新加载systemd并启动服务
   systemctl daemon-reload
   systemctl enable k3s-agent
-  systemctl restart k3s-agent
-
-  # 等待k3s-agent启动，输出详细状态
-  echo "等待K3s worker节点启动..." | tee -a "$INSTALL_LOG"
-  for i in $(seq 1 30); do
-    status=$(systemctl is-active k3s-agent)
-    echo "k3s-agent 当前状态: $status" | tee -a "$INSTALL_LOG"
-    if [ "$status" = "active" ]; then
-      echo "✓ K3s worker节点已启动" | tee -a "$INSTALL_LOG"
-      break
-    fi
-    echo "等待... ($i/30)" | tee -a "$INSTALL_LOG"
-    sleep 2
-  done
-
-  # 检查k3s-agent状态
-  if ! systemctl is-active --quiet k3s-agent; then
-    echo "错误: K3s worker节点启动失败" | tee -a "$INSTALL_LOG"
-    systemctl status k3s-agent >> "$INSTALL_LOG" 2>&1 || true
+  
+  echo "✓ k3s-agent服务配置完成" | tee -a "$INSTALL_LOG"
+  
+  # 步骤4: 启动并等待k3s-agent服务
+  echo "[4/5] 启动k3s-agent服务..." | tee -a "$INSTALL_LOG"
+  
+  # 启动服务
+  if ! systemctl start k3s-agent; then
+    echo "✗ 启动k3s-agent服务失败" | tee -a "$INSTALL_LOG"
+    systemctl status k3s-agent --no-pager | tee -a "$INSTALL_LOG"
     return 1
   fi
-
-  # 加载镜像（worker节点不再check_k3s_running，直接加载）
+  
+  # 等待服务完全启动
+  if ! wait_for_k3s_agent; then
+    echo "✗ k3s-agent服务启动超时或失败" | tee -a "$INSTALL_LOG"
+    return 1
+  fi
+  
+  echo "✓ k3s-agent服务启动成功" | tee -a "$INSTALL_LOG"
+  
+  # 步骤5: 加载镜像
+  echo "[5/5] 加载容器镜像..." | tee -a "$INSTALL_LOG"
+  
+  # 等待k3s containerd准备就绪
+  echo "  等待containerd准备就绪..." | tee -a "$INSTALL_LOG"
+  for i in $(seq 1 30); do
+    if k3s ctr images ls >/dev/null 2>&1; then
+      echo "  ✓ containerd已就绪" | tee -a "$INSTALL_LOG"
+      break
+    fi
+    if [ $i -eq 30 ]; then
+      echo "  ✗ containerd准备超时，跳过镜像加载" | tee -a "$INSTALL_LOG"
+      return 0
+    fi
+    sleep 1
+  done
+  
+  # 查找并加载镜像
   local images_dir=$(find "$script_dir" -type d -name "images" 2>/dev/null | head -1)
-  load_images_to_k3s "$images_dir" "worker"
-  preload_kubeedge_images "$images_dir"
-
+  if [ -n "$images_dir" ] && [ -d "$images_dir" ]; then
+    # 先加载普通镜像
+    if load_images_to_k3s "$images_dir" "worker"; then
+      echo "✓ 普通镜像加载完成" | tee -a "$INSTALL_LOG"
+    else
+      echo "✗ 普通镜像加载失败" | tee -a "$INSTALL_LOG"
+    fi
+    
+    # 预加载KubeEdge镜像
+    if preload_kubeedge_images "$images_dir"; then
+      echo "✓ KubeEdge镜像预加载完成" | tee -a "$INSTALL_LOG"
+    else
+      echo "✗ KubeEdge镜像预加载失败" | tee -a "$INSTALL_LOG"
+    fi
+  else
+    echo "⚠ 未找到镜像目录，跳过镜像加载" | tee -a "$INSTALL_LOG"
+  fi
+  
+  echo "=== K3s worker节点安装完成 ===" | tee -a "$INSTALL_LOG"
   return 0
 }
 
@@ -312,21 +486,36 @@ if [ "$MODE" = "worker" ]; then
     exit 1
   fi
   
+  # 检查master节点token格式
+  if [[ ! "$K3S_TOKEN" =~ ^K10.* ]]; then
+    echo "警告: K3S_TOKEN格式可能不正确，应该以 'K10' 开头" | tee -a "$INSTALL_LOG"
+    echo "当前token: ${K3S_TOKEN:0:50}..." | tee -a "$INSTALL_LOG"
+  fi
+  
   # 安装worker节点
   if install_k3s_worker "$K3S_BIN" "$K3S_MASTER_ADDR" "$K3S_MASTER_PORT" "$K3S_TOKEN" "$NODE_NAME" "$SCRIPT_DIR"; then
     echo "" | tee -a "$INSTALL_LOG"
-    echo "=== Worker节点加入K3s集群信息 ===" | tee -a "$INSTALL_LOG"
-    echo "Master地址: $K3S_MASTER_ADDR" | tee -a "$INSTALL_LOG"
-    echo "端口: $K3S_MASTER_PORT" | tee -a "$INSTALL_LOG"
-    echo "Token: $K3S_TOKEN" | tee -a "$INSTALL_LOG"
+    echo "=== Worker节点加入成功 ===" | tee -a "$INSTALL_LOG"
+    echo "Master地址: $K3S_MASTER_ADDR:$K3S_MASTER_PORT" | tee -a "$INSTALL_LOG"
     echo "节点名称: $NODE_NAME" | tee -a "$INSTALL_LOG"
+    echo "Token: ${K3S_TOKEN:0:20}..." | tee -a "$INSTALL_LOG"
     echo "" | tee -a "$INSTALL_LOG"
-    echo "如需重新加入，请执行:" | tee -a "$INSTALL_LOG"
-    echo "  sudo ./install.sh --worker $K3S_MASTER_ADDR:$K3S_MASTER_PORT $K3S_TOKEN $NODE_NAME" | tee -a "$INSTALL_LOG"
+    
+    echo "=== 故障排除指南 ===" | tee -a "$INSTALL_LOG"
+    echo "1. 检查服务状态: sudo systemctl status k3s-agent" | tee -a "$INSTALL_LOG"
+    echo "2. 查看服务日志: sudo journalctl -u k3s-agent -f" | tee -a "$INSTALL_LOG"
+    echo "3. 检查网络连接: ping $K3S_MASTER_ADDR" | tee -a "$INSTALL_LOG"
+    echo "4. 验证端口连通性: telnet $K3S_MASTER_ADDR $K3S_MASTER_PORT" | tee -a "$INSTALL_LOG"
     echo "" | tee -a "$INSTALL_LOG"
     echo "✓ K3s worker节点安装完成" | tee -a "$INSTALL_LOG"
   else
     echo "✗ K3s worker节点安装失败" | tee -a "$INSTALL_LOG"
+    echo "" | tee -a "$INSTALL_LOG"
+    echo "=== 故障排除建议 ===" | tee -a "$INSTALL_LOG"
+    echo "1. 确保master节点正在运行并且可以从worker节点访问" | tee -a "$INSTALL_LOG"
+    echo "2. 检查token是否正确: 在master节点上运行 'cat /var/lib/rancher/k3s/server/node-token'" | tee -a "$INSTALL_LOG"
+    echo "3. 检查防火墙设置，确保端口 $K3S_MASTER_PORT 已开放" | tee -a "$INSTALL_LOG"
+    echo "4. 查看详细日志: cat $INSTALL_LOG" | tee -a "$INSTALL_LOG"
     exit 1
   fi
   
@@ -334,7 +523,7 @@ if [ "$MODE" = "worker" ]; then
 fi
 
 # =====================================
-# Master/Cloud 安装模式
+# Master/Cloud 安装模式 (保持不变)
 # =====================================
 
 echo "=== KubeEdge Cloud/Master 安装模式 ===" | tee -a "$INSTALL_LOG"
@@ -637,7 +826,7 @@ echo "✓ Edge token已生成" | tee -a "$INSTALL_LOG"
 echo "" | tee -a "$INSTALL_LOG"
 
 # =====================================
-# 附加配置
+# 附加配置 (保持不变)
 # =====================================
 
 # 修补K3s内置Metrics Server
