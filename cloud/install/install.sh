@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
 # KubeEdge 云端离线安装脚本
 
 # 用途:
