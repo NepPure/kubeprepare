@@ -188,7 +188,7 @@ jobs:
             exit 1
           fi
           
-          PACKAGE_NAME="kubeedge-cloud-${KUBEEDGE_VERSION}-k3s-${K3S_VERSION}-${{ matrix.arch }}.tar.gz"
+          PACKAGE_NAME="kubeedge-cloud-${KUBEEDGE_VERSION}-k3s-${K3S_VERSION}-${{ matrix.arch }}-${TAG_VERSION}.tar.gz"
           
           # 创建临时目录用于组织文件结构
           TEMP_PKG_DIR="$(mktemp -d)"
@@ -275,7 +275,7 @@ jobs:
       - name: 生成校验和并准备发布文件
         run: |
           # 为云端包生成校验和（使用环境变量中的版本号）
-          PACKAGE_NAME="kubeedge-cloud-${KUBEEDGE_VERSION}-k3s-${K3S_VERSION}-${{ matrix.arch }}.tar.gz"
+          PACKAGE_NAME="kubeedge-cloud-${KUBEEDGE_VERSION}-k3s-${K3S_VERSION}-${{ matrix.arch }}-${TAG_VERSION}.tar.gz"
           sha256sum "$PACKAGE_NAME" > "${PACKAGE_NAME}.sha256sum.txt"
           
           # 创建发布目录并收集所有文件
